@@ -36,6 +36,17 @@ games = DATA["games"]
 cards = "\n".join(card(g, i == 0) for i, g in enumerate(games))
 built = datetime.date.today().isoformat()
 
+# 見出しは文節で折り返す。text-wrap: balance は意味の切れ目を見ないので使わない
+parts = DATA.get("title_parts") or [DATA["title"]]
+heading = "".join(f'<span>{p}</span>' for p in parts)
+# ホーム画面のラベルはiOSで10字ほどで切られるので短いものを使う
+home_label = DATA.get("home_label", DATA["title"])
+photo = DATA.get("photo")
+photo_tag = (
+    f'\n    <img class="me" src="{photo}" width="56" height="56" alt="パパ" decoding="async">'
+    if photo else ""
+)
+
 HTML = f"""<!doctype html>
 <html lang="ja">
 <head>
@@ -47,7 +58,7 @@ HTML = f"""<!doctype html>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="{DATA['title']}">
+<meta name="apple-mobile-web-app-title" content="{home_label}">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="robots" content="noindex,nofollow">
 <style>
@@ -81,12 +92,22 @@ HTML = f"""<!doctype html>
   }}
   .wrap{{ max-width:640px; margin:0 auto; }}
 
-  header{{ padding:6px 4px 22px; }}
+  header{{
+    display:flex; align-items:center; gap:14px;
+    padding:6px 4px 22px;
+  }}
+  .me{{
+    flex:0 0 auto; width:56px; height:56px; border-radius:50%;
+    object-fit:cover; display:block;
+    border:3px solid var(--panel); outline:1px solid var(--line);
+    outline-offset:-3px;
+  }}
   h1{{
-    font-size:27px; font-weight:700; line-height:1.35; letter-spacing:.04em;
+    font-size:24px; font-weight:700; line-height:1.4; letter-spacing:.04em;
     font-feature-settings:"palt" 1;
   }}
-  .lede{{ margin-top:6px; color:var(--sub); font-size:13.5px; line-height:1.8; }}
+  h1 span{{ display:inline-block; }}
+  .lede{{ margin-top:4px; color:var(--sub); font-size:13.5px; line-height:1.8; }}
 
   .grid{{
     display:grid; gap:14px;
@@ -138,9 +159,11 @@ HTML = f"""<!doctype html>
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <h1>{DATA['title']}</h1>
-    <p class="lede">すきな えを おしてね</p>
+  <header>{photo_tag}
+    <div>
+      <h1>{heading}</h1>
+      <p class="lede">すきな えを おしてね</p>
+    </div>
   </header>
 
   <nav class="grid">
@@ -163,7 +186,7 @@ HTML = f"""<!doctype html>
 
 MANIFEST = {
     "name": DATA["title"],
-    "short_name": DATA["title"],
+    "short_name": home_label,
     "start_url": ".",
     "scope": ".",
     "display": "standalone",

@@ -1,5 +1,8 @@
 {
-  "title": "おもちゃばこ",
+  "title": "みーちゃんのおもちゃばこ",
+  "title_parts": ["みーちゃんの", "おもちゃばこ"],
+  "home_label": "おもちゃばこ",
+  "photo": "papa.jpg",
   "games": [
     {
       "slug": "nijiiro-piano",

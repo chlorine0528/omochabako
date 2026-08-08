@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>おもちゃばこ</title>
+<title>みーちゃんのおもちゃばこ</title>
 <meta name="theme-color" content="#fbf7ef" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1a1b1e" media="(prefers-color-scheme: dark)">
 <link rel="manifest" href="manifest.webmanifest">
@@ -43,12 +43,22 @@
   }
   .wrap{ max-width:640px; margin:0 auto; }
 
-  header{ padding:6px 4px 22px; }
+  header{
+    display:flex; align-items:center; gap:14px;
+    padding:6px 4px 22px;
+  }
+  .me{
+    flex:0 0 auto; width:56px; height:56px; border-radius:50%;
+    object-fit:cover; display:block;
+    border:3px solid var(--panel); outline:1px solid var(--line);
+    outline-offset:-3px;
+  }
   h1{
-    font-size:27px; font-weight:700; line-height:1.35; letter-spacing:.04em;
+    font-size:24px; font-weight:700; line-height:1.4; letter-spacing:.04em;
     font-feature-settings:"palt" 1;
   }
-  .lede{ margin-top:6px; color:var(--sub); font-size:13.5px; line-height:1.8; }
+  h1 span{ display:inline-block; }
+  .lede{ margin-top:4px; color:var(--sub); font-size:13.5px; line-height:1.8; }
 
   .grid{
     display:grid; gap:14px;
@@ -101,8 +111,11 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>おもちゃばこ</h1>
-    <p class="lede">すきな えを おしてね</p>
+    <img class="me" src="papa.jpg" width="56" height="56" alt="パパ" decoding="async">
+    <div>
+      <h1><span>みーちゃんの</span><span>おもちゃばこ</span></h1>
+      <p class="lede">すきな えを おしてね</p>
+    </div>
   </header>
 
   <nav class="grid">
