@@ -8,7 +8,8 @@
 - 一覧の正: `games.json`
 - 一覧の生成: `python3 build.py`（`index.html` と `manifest.webmanifest` を上書き）
 
-作るときのルールは `DESIGN.md` にまとめてある。毎回そこから始める。
+作るときのルールは `DESIGN.md` に、公開までの手順は `PUBLISH.md` にまとめてある。
+毎週日曜の朝6時に定期タスクが `PUBLISH.md` を読んで1本足す。
 
 ## 週1本を足す手順
 
