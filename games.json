@@ -1,9 +1,19 @@
 {
   "title": "みーちゃんのおもちゃばこ",
-  "title_parts": ["みーちゃんの", "おもちゃばこ"],
+  "title_parts": [
+    "みーちゃんの",
+    "おもちゃばこ"
+  ],
   "home_label": "おもちゃばこ",
   "photo": "papa.jpg",
   "games": [
+    {
+      "slug": "ohanabatake",
+      "title": "おはなばたけ",
+      "date": "2026-08-09",
+      "bg": "#e3f0d5",
+      "icon": "<svg viewBox=\"0 0 120 120\" aria-hidden=\"true\"><g stroke=\"#4a9450\" stroke-width=\"5\" stroke-linecap=\"round\" fill=\"none\"><path d=\"M30 70C28 84 27 96 28 108\"/><path d=\"M62 62C63 78 63 94 62 110\"/><path d=\"M94 72C95 86 95 98 94 108\"/></g><g fill=\"#57a862\"><ellipse cx=\"18\" cy=\"86\" rx=\"11\" ry=\"6\" transform=\"rotate(-24 18 86)\"/><ellipse cx=\"74\" cy=\"84\" rx=\"12\" ry=\"6.5\" transform=\"rotate(22 74 84)\"/><ellipse cx=\"52\" cy=\"97\" rx=\"11\" ry=\"6\" transform=\"rotate(-20 52 97)\"/><ellipse cx=\"105\" cy=\"92\" rx=\"9\" ry=\"5\" transform=\"rotate(24 105 92)\"/></g><g fill=\"#f2709c\"><circle cx=\"30\" cy=\"45\" r=\"9\"/><circle cx=\"42\" cy=\"53\" r=\"9\"/><circle cx=\"38\" cy=\"67\" r=\"9\"/><circle cx=\"22\" cy=\"67\" r=\"9\"/><circle cx=\"18\" cy=\"53\" r=\"9\"/></g><circle cx=\"30\" cy=\"56\" r=\"7.5\" fill=\"#f7c948\"/><g fill=\"#ffd166\"><circle cx=\"62\" cy=\"24\" r=\"11\"/><circle cx=\"79\" cy=\"36\" r=\"11\"/><circle cx=\"72\" cy=\"56\" r=\"11\"/><circle cx=\"52\" cy=\"56\" r=\"11\"/><circle cx=\"45\" cy=\"36\" r=\"11\"/></g><circle cx=\"62\" cy=\"40\" r=\"9\" fill=\"#ef8354\"/><g fill=\"#b07be0\"><circle cx=\"94\" cy=\"48\" r=\"8\"/><circle cx=\"104\" cy=\"56\" r=\"8\"/><circle cx=\"100\" cy=\"68\" r=\"8\"/><circle cx=\"88\" cy=\"68\" r=\"8\"/><circle cx=\"84\" cy=\"56\" r=\"8\"/></g><circle cx=\"94\" cy=\"58\" r=\"6.5\" fill=\"#f7c948\"/><g transform=\"translate(21,19) rotate(-12)\"><ellipse cx=\"-6\" cy=\"-3\" rx=\"7\" ry=\"5.5\" fill=\"#7fd0e8\"/><ellipse cx=\"6\" cy=\"-3\" rx=\"7\" ry=\"5.5\" fill=\"#7fd0e8\"/><ellipse cx=\"-5\" cy=\"5\" rx=\"5.5\" ry=\"4\" fill=\"#a8e0ef\"/><ellipse cx=\"5\" cy=\"5\" rx=\"5.5\" ry=\"4\" fill=\"#a8e0ef\"/><ellipse cx=\"0\" cy=\"1\" rx=\"1.8\" ry=\"6\" fill=\"#5b5148\"/></g></svg>"
+    },
     {
       "slug": "nijiiro-piano",
       "title": "にじいろピアノ",
