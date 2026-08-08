@@ -1,6 +1,6 @@
 # 週1本を作って公開する手順
 
-毎週日曜の朝6時、定期タスクがまっさらなセッションでこれを実行する。
+毎週日曜の朝6時、Coworkの定期タスクがまっさらなセッションでこれを実行する。
 このファイルは新しいセッションが唯一の頼りにする手順書なので、環境の癖まで書いてある。
 
 - リポジトリ: `chlorine0528/omochabako`（Public、ブランチ `main`）
@@ -9,166 +9,182 @@
 
 ## この環境の制約
 
-**クラウドコンテナからGitHubへはpushできない。** gitプロキシがこのリポジトリを許可していない。
-`api.github.com` への直接アクセスも `github.io` への通信も遮断されている。
-**ファイルの読み書きはすべてChrome拡張経由でGitHub REST APIを叩く。** 迂回路はない。
+クラウドのコンテナで動く。**ここからGitHubへは書き込めない。**
+サンドボックスの外向き通信は必ずプロキシを通り、そこを外すことはできない。
+`git push` も `api.github.com` もこのリポジトリでは403で止まる。
+Chrome拡張は、定期タスクがクラウドで起動する以上そもそも生えてこない。
+くろださんのMacに用があるツールを探しても無駄なので、探さないこと。
 
-**javascript_tool に長い文字列を渡すと `+` と `/` が化ける。** 素のbase64は壊れる。
-バイナリを運ぶときは必ず **base64url**（`-` と `_`）を使い、4000文字前後に分割して、
-1チャンクごとにSHA-256の先頭16桁を突き合わせてから結合する。
+読む方だけは通る。**`raw.githubusercontent.com` は読める。**
+現状の把握はすべてここから `curl` する。`github.io` は遮断されているので使わない。
+
+**書き込みは Zapier の Code by Zapier からGitHub APIを叩く。** 手順は下の「公開する」にある。
 
 ## 手順
 
-### 1. ツールを読み込む
-
-ToolSearch を1回だけ呼び、まとめて読み込む。
+### 1. 現状を読む
 
 ```
-select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__tabs_close_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__javascript_tool,mcp__claude-in-chrome__computer
-```
-
-Chromeに届かない場合はここで判断する。ゲームの制作と検証だけ済ませてファイルを渡し、
-公開が残っていることを明示して終わる。中途半端にリトライしない。
-
-### 2. 作業用タブを開いて認証を通す
-
-`tabs_create_mcp` で専用タブを作り、公開URLへ移動する。`github.com` のページからだと
-CSPで `github.io` への `fetch` が弾かれるので、**必ず `chlorine0528.github.io` 側にいること**。
-
-```js
-window.__T = '（定期タスクの本文で渡されたトークン）';
-window.__api = async (p, o = {}) => {
-  const r = await fetch('https://api.github.com' + p, {...o, headers: {
-    'Authorization': 'Bearer ' + window.__T,
-    'Accept': 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28', ...(o.headers || {})}});
-  const t = await r.text(); let j; try { j = JSON.parse(t) } catch(e) { j = t }
-  return {status: r.status, body: j};
-};
-(await window.__api('/repos/chlorine0528/omochabako')).status   // 200 を確認
-```
-
-401 が返ったらトークンが失効している（有効期限は2026年11月6日）。
-その旨を報告して止める。勝手に新しいトークンを発行しない。
-
-### 3. 現状を読む
-
-同じタブから公開中のファイルを取得し、結果をそのままワークスペースに書く。
-
-```js
-const base = 'https://chlorine0528.github.io/omochabako/';
-const g = await (await fetch(base + 'games.json', {cache:'no-store'})).text();
-const b = await (await fetch(base + 'build.py',   {cache:'no-store'})).text();
-const d = await (await fetch(base + 'DESIGN.md',  {cache:'no-store'})).text();
-JSON.stringify({g, b, d})
+curl -sS https://raw.githubusercontent.com/chlorine0528/omochabako/main/games.json
+curl -sS https://raw.githubusercontent.com/chlorine0528/omochabako/main/DESIGN.md
+curl -sS https://raw.githubusercontent.com/chlorine0528/omochabako/main/build.py
+curl -sS https://raw.githubusercontent.com/chlorine0528/omochabako/main/tools/verify_game.js
 ```
 
 `DESIGN.md` は必ず読む。2歳児向けの前提条件がすべてそこにある。
+既存のゲームも1本は読む。「もどる」ボタンを流用するため。
 
-### 4. 今週の1本を作る
+```
+curl -sS --create-dirs -o games/shabondama/index.html \
+  https://raw.githubusercontent.com/chlorine0528/omochabako/main/games/shabondama/index.html
+```
 
-`games.json` の既存タイトルと重複しない題材を選ぶ。同じ操作の焼き直しも避ける
-（タップして割る、パッドを叩く、はすでにある）。指でなぞる、傾ける、順番に押す、
-といった別の動作か、別の題材で組む。
+### 2. 今週の1本を決める
+
+`games.json` の既存タイトルと重複しない題材を選ぶ。同じ操作の焼き直しも避ける。
+これまでに使った操作は `games.json` を見て確かめる。指でなぞる、傾ける、
+順番に押す、といった別の動作か、別の題材で組む。
+
+### 3. 作る
 
 `games/<slug>/index.html` を1ファイルで完結させる。`DESIGN.md` の10項目を満たすこと。
-`games/shabondama/index.html` の「もどる」ボタン（700ms長押し）はそのまま流用する。
+加えて、このリポジトリでは次の2つを守る。
 
-### 5. 実測する
+- **どこを押しても音が鳴る。** 無反応の場所を作らないという `DESIGN.md` の3番を、
+  検証スクリプトは「音が鳴ったか」で数えている。押して何も鳴らない場所があると落ちる
+- **「もどる」ボタンは `games/shabondama/index.html` のものをそのまま流用する。**
+  700msの長押しで発火する、あのHTMLとCSSとJSの3点セットを丸ごと持ってくる
 
-目分量で「対応済み」と書かない。Playwrightで縦(390x844)と横(844x390)の両方を開き、
-以下をスクリプトで数える。1つでも落ちたら直してから次へ進む。
+### 4. 実測する
 
-- コンソールエラーが出ない
-- `scrollHeight - innerHeight` と `scrollWidth - innerWidth` がどちらも0以下
-- `performance.getEntriesByType('resource')` に外部ホストが1件もない
-- タップ対象の実測サイズが68px以上
-- 「もどる」が250msの押下では発火せず、900msの長押しで発火する
+目分量で「対応済み」と書かない。
 
-スクリーンショットも撮って実際に見る。
+```
+node tools/verify_game.js <slug>
+```
 
-### 6. 一覧を更新する
+縦(390x844)と横(844x390)の両方で20項目を数える。1つでも落ちたら直してから次へ進む。
+Playwrightはコンテナに入っている。`require('playwright')` が見つからないときだけ
+`npm install -g playwright` を回す。
+
+`/tmp/omochabako-verify/` にスクリーンショットが出る。撮って終わりにせず、
+Readツールで実際に開いて見る。草の見えかたや花の重なりなど、数字に出ないところはここで直す。
+
+### 5. 一覧を更新する
 
 `games.json` の `games` 配列の**先頭**に1件足す。`slug` `title` `date` `bg` `icon`。
+`date` はJSTの当日（`TZ=Asia/Tokyo date +%F`）。
 `icon` は viewBox="0 0 120 120" のインラインSVG。カードの絵になるので、
-ゲームの中身が伝わる図にする。
+ゲームの中身が伝わる図にする。小さく表示されるので、細かい線ではなく面で描く。
 
-`python3 build.py` を回して `index.html` を作り直す。手で書き換えない。
+```
+TZ=Asia/Tokyo python3 build.py
+```
 
-### 7. 公開する
+`index.html` はこれで作り直す。手で書き換えない。
+`build.py` は `manifest.webmanifest` も書き出すが、中身は変わらないはずなので公開しなくてよい。
+
+### 6. 公開する
 
 変更があるのは3ファイルだけ（新しいゲーム、`games.json`、`index.html`）。
-コンテナ側でまとめて圧縮する。
+
+まずコンテナ側で1つの文字列にまとめる。**base64url を使うこと。**
+素のbase64だと `+` と `/` が途中で化けて、必ずsha照合で落ちる。
 
 ```python
-import json, gzip, base64, hashlib, pathlib
+import json, gzip, base64, pathlib, hashlib
 paths = ['games/<slug>/index.html', 'games.json', 'index.html']
 data = {p: pathlib.Path(p).read_text(encoding='utf-8') for p in paths}
 gz = gzip.compress(json.dumps(data, ensure_ascii=False).encode(), 9)
 u = base64.urlsafe_b64encode(gz).decode().rstrip('=')
-n = 4; size = (len(u) + n - 1) // n
-for i in range(n):
-    c = u[i*size:(i+1)*size]
-    print(f'--- {i} len={len(c)} sha={hashlib.sha256(c.encode()).hexdigest()[:16]}')
-    print(c)
+print(len(u), hashlib.sha256(u.encode()).hexdigest()[:16])
+pathlib.Path('/tmp/payload.txt').write_text(u)
 ```
 
-各チャンクを `window.__C[i]` に入れ、SHA-256の先頭16桁が一致することを毎回確認する。
-一致しなければそのチャンクだけ送り直す。全部そろったらブラウザ側で復元する。
+次に ToolSearch で Zapier のツールを読み込む。
 
-```js
-const u = window.__C[0] + window.__C[1] + window.__C[2] + window.__C[3];
-const bin = Uint8Array.from(atob(u.replace(/-/g,'+').replace(/_/g,'/')), c => c.charCodeAt(0));
-const rd = new Blob([bin]).stream().pipeThrough(new DecompressionStream('gzip')).getReader();
-const parts = []; let n = 0;
-while (true) { const {done, value} = await rd.read(); if (done) break; parts.push(value); n += value.length; }
-const buf = new Uint8Array(n); let o = 0; for (const p of parts) { buf.set(p, o); o += p.length; }
-window.__F = JSON.parse(new TextDecoder().decode(buf));
-Object.entries(window.__F).map(([k,v]) => k + ':' + v.length)
+```
+select:mcp__Zapier__execute_zapier_write_action
 ```
 
-blob → tree → commit → ref の順に積む。`base_tree` に現在のツリーを渡して差分だけ載せる。
+`execute_zapier_write_action` を次のように呼ぶ。
+
+- `selected_api`: `CodeCLIAPI`
+- `action`: `01929fad-d3dd-62c2-52ed-7868d5fcc691`（Run Javascript）
+- `params.input`: `t`（トークン）、`payload`（上の文字列）、`sha`（上のsha）、`msg`（`add: <title>`）
+- `params.code`: 下のJS
 
 ```js
-const R = '/repos/chlorine0528/omochabako';
-const head = (await window.__api(R + '/git/refs/heads/main')).body.object.sha;
-const baseTree = (await window.__api(R + '/git/commits/' + head)).body.tree.sha;
+const zlib = require('zlib');
+const crypto = require('crypto');
+const T = inputData.t, R = '/repos/chlorine0528/omochabako';
+const u = inputData.payload;
+const sha = crypto.createHash('sha256').update(u).digest('hex').slice(0,16);
+if (sha !== inputData.sha) return { error: 'payload sha mismatch', got: sha, want: inputData.sha, len: u.length };
+const files = JSON.parse(zlib.gunzipSync(Buffer.from(u, 'base64url')).toString('utf8'));
+const api = async (p, opt = {}) => {
+  const r = await fetch('https://api.github.com' + p, Object.assign({}, opt, {
+    headers: Object.assign({
+      'Authorization': 'Bearer ' + T,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'omochabako-bot'
+    }, opt.headers || {})
+  }));
+  const t = await r.text();
+  let j; try { j = JSON.parse(t); } catch (e) { j = t; }
+  if (r.status >= 300) throw new Error(p + ' -> ' + r.status + ' ' + JSON.stringify(j).slice(0, 300));
+  return j;
+};
+const head = (await api(R + '/git/refs/heads/main')).object.sha;
+const baseTree = (await api(R + '/git/commits/' + head)).tree.sha;
 const tree = [];
-for (const [path, content] of Object.entries(window.__F)) {
-  const r = await window.__api(R + '/git/blobs', {method:'POST',
-    body: JSON.stringify({content, encoding: 'utf-8'})});
-  tree.push({path, mode: '100644', type: 'blob', sha: r.body.sha});
+for (const path of Object.keys(files)) {
+  const b = await api(R + '/git/blobs', { method: 'POST', body: JSON.stringify({ content: files[path], encoding: 'utf-8' }) });
+  tree.push({ path: path, mode: '100644', type: 'blob', sha: b.sha });
 }
-const tr = await window.__api(R + '/git/trees', {method:'POST',
-  body: JSON.stringify({base_tree: baseTree, tree})});
-const cm = await window.__api(R + '/git/commits', {method:'POST',
-  body: JSON.stringify({message: 'add: <title>', tree: tr.body.sha, parents: [head]})});
-const rf = await window.__api(R + '/git/refs/heads/main', {method:'PATCH',
-  body: JSON.stringify({sha: cm.body.sha})});
-JSON.stringify({ref: rf.status, head: rf.body.object.sha.slice(0,7)})
+const tr = await api(R + '/git/trees', { method: 'POST', body: JSON.stringify({ base_tree: baseTree, tree: tree }) });
+const cm = await api(R + '/git/commits', { method: 'POST', body: JSON.stringify({
+  message: inputData.msg, tree: tr.sha, parents: [head],
+  author: { name: 'Claude', email: 'noreply@anthropic.com', date: new Date().toISOString() }
+}) });
+const rf = await api(R + '/git/refs/heads/main', { method: 'PATCH', body: JSON.stringify({ sha: cm.sha }) });
+return { ok: true, before: head.slice(0,7), after: rf.object.sha.slice(0,7) };
 ```
 
-### 8. 公開を確認する
+`payload sha mismatch` が返ったら、文字列が途中で化けている。作り直して送り直す。
+refを書き換える前に落ちた場合は、リポジトリには何も入っていないので、そのままやり直してよい。
 
-1分ほど待ってから公開URLを開き直し、カードが1枚増えていること、
-新しいゲームのURLが200を返すことを実際に確認する。ビルド状況は
-`/repos/chlorine0528/omochabako/pages/builds/latest` で見られる。
+### 7. 公開を確かめる
 
-### 9. LINEの文面を出す
+1分ほど待ってから `raw.githubusercontent.com` を叩き、`main` に載ったことを確かめる。
 
-自動送信はしない。くろださんがそのまま貼れる短い文面を用意する。
-新作の名前、遊び方の一言、おもちゃばこのURL。3〜4行でよい。
-ゲーム単体のURLではなく、おもちゃばこのURLを渡す。
+```
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  https://raw.githubusercontent.com/chlorine0528/omochabako/main/games/<slug>/index.html
+curl -sS https://raw.githubusercontent.com/chlorine0528/omochabako/main/games.json
+```
 
-## 後片付け（必須）
+`github.io` はここから見えないので、Pagesのビルドまでは確認できない。
+`main` に載っていれば数分で公開される。
 
-Chrome拡張（mcp__claude-in-chrome__*）を使った場合、処理の成否にかかわらず
-終了前に必ず以下を行う。
+### 8. 知らせる
 
-1. tabs_context_mcp で自分のタブグループのタブを列挙する
-2. このタスクで開いたタブをすべて tabs_close_mcp で閉じる
-3. 最後の1枚を閉じるとタブグループも自動で解除される。
-   タブとタブグループが残っていないことを確認してから終了する
+PushNotification で、新作の名前と、奥様へそのまま貼れるLINEの文面を送る。
+自動送信はしない。文面は3〜4行でよい。ゲーム単体のURLではなく、おもちゃばこのURLを渡す。
 
-エラーで中断する場合も、報告の前にこの後片付けを済ませること。
-ユーザーが「このタブは開いたままにして」と明示した場合のみ、そのタブを除外する。
+```
+あたらしいおもちゃ「○○」ができました。
+（遊び方を1行）
+https://chlorine0528.github.io/omochabako/
+```
+
+## うまくいかないとき
+
+- GitHubが401を返したらトークンが失効している（有効期限は2026年11月6日）。
+  その旨を PushNotification で知らせて止まる。勝手に新しいトークンを発行しない
+- 20項目のどれかが落ちたまま公開しない。直せないときは、そのゲームを捨てて
+  別の題材で作り直したほうが早い
+- どうしても完成しないときは、何がだめだったかを PushNotification で知らせて終わる。
+  壊れたものを公開しない
+- 途中で止まったときも、必ず PushNotification で知らせる。黙って終わらない

@@ -1,0 +1,12 @@
+{
+  "name": "omochabako",
+  "private": true,
+  "description": "みーちゃんのおもちゃばこ。検証スクリプトを回すためだけの package.json",
+  "scripts": {
+    "verify": "node tools/verify_game.js",
+    "build": "python3 build.py"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}
