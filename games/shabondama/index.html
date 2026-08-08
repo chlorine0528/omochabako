@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#cfe7ec">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>しゃぼんだま</title>
+<style>
+  :root{ color-scheme: light; }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    width:100%; height:100%; overflow:hidden;
+    background:#e6f1ef;
+    overscroll-behavior:none; touch-action:none;
+    -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent;
+    font-family: system-ui, -apple-system, "Segoe UI",
+      "Hiragino Kaku Gothic ProN", "Hiragino Sans",
+      "BIZ UDPGothic", "Yu Gothic Medium", "Yu Gothic", YuGothic,
+      Meiryo, "Noto Sans JP", sans-serif;
+  }
+  #c{ position:fixed; inset:0; width:100%; height:100%; display:block; }
+  #home{
+    position:fixed; top:max(10px, env(safe-area-inset-top)); left:max(10px, env(safe-area-inset-left));
+    width:40px; height:40px; padding:0; border:0; border-radius:50%;
+    background:rgba(255,255,255,.42); backdrop-filter:blur(2px);
+    display:grid; place-items:center; cursor:pointer; z-index:5;
+    touch-action:none; -webkit-tap-highlight-color:transparent;
+  }
+  #home svg{ width:34px; height:34px; display:block; }
+  #home .trk{ fill:none; stroke:rgba(74,92,96,.22); stroke-width:2.5; }
+  #home .rng{
+    fill:none; stroke:#4a5c60; stroke-width:2.5; stroke-linecap:round;
+    stroke-dasharray:94.2; stroke-dashoffset:94.2;
+    transform:rotate(-90deg); transform-origin:50% 50%;
+    transition:stroke-dashoffset .04s linear;
+  }
+  #home.hold .rng{ stroke-dashoffset:0; transition:stroke-dashoffset .7s linear; }
+  #home .ico{ fill:#4a5c60; opacity:.72; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="home" aria-label="おもちゃばこに もどる">
+  <svg viewBox="0 0 36 36" aria-hidden="true">
+    <circle class="trk" cx="18" cy="18" r="15"/>
+    <circle class="rng" cx="18" cy="18" r="15"/>
+    <path class="ico" d="M18 9.4 10.2 16v9.1c0 .6.5 1.1 1.1 1.1h4.1v-5.3h5.2v5.3h4.1c.6 0 1.1-.5 1.1-1.1V16z"/>
+  </svg>
+</button>
+<script>
+(function(){
+'use strict';
+
+/* ---------- 画面 ---------- */
+var c = document.getElementById('c'), ctx = c.getContext('2d');
+var W = 0, H = 0, DPR = 1, SKY = null;
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  var r = c.getBoundingClientRect();
+  W = Math.max(1, r.width); H = Math.max(1, r.height);
+  c.width = Math.round(W * DPR); c.height = Math.round(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  SKY = ctx.createLinearGradient(0, 0, 0, H);
+  SKY.addColorStop(0,   '#c3e3ea');
+  SKY.addColorStop(0.55,'#e2eee4');
+  SKY.addColorStop(1,   '#fbf3e2');
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', function(){ setTimeout(resize, 120); });
+if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+resize();
+
+/* ---------- 音 ---------- */
+var ac = null, master = null, noiseBuf = null;
+var SCALE = [523.25, 587.33, 659.25, 783.99, 880.00, 1046.50];
+
+function audio(){
+  if (ac){ if (ac.state === 'suspended') ac.resume(); return ac; }
+  var AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  try { ac = new AC(); } catch(e){ return null; }
+  var comp = ac.createDynamicsCompressor();
+  comp.threshold.value = -16; comp.knee.value = 22; comp.ratio.value = 9;
+  comp.attack.value = 0.003; comp.release.value = 0.22;
+  master = ac.createGain(); master.gain.value = 0.5;
+  master.connect(comp); comp.connect(ac.destination);
+  var n = Math.floor(ac.sampleRate * 0.12);
+  noiseBuf = ac.createBuffer(1, n, ac.sampleRate);
+  var d = noiseBuf.getChannelData(0);
+  for (var i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.6);
+  return ac;
+}
+
+function sPop(f){
+  var a = audio(); if (!a) return;
+  var t = a.currentTime;
+  var o = a.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(f * 2.3, t);
+  o.frequency.exponentialRampToValueAtTime(Math.max(70, f * 0.55), t + 0.12);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.42, t + 0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.17);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.19);
+  var s = a.createBufferSource(); s.buffer = noiseBuf;
+  var bp = a.createBiquadFilter(); bp.type = 'bandpass';
+  bp.frequency.value = Math.min(9000, f * 3.1); bp.Q.value = 2.6;
+  var gn = a.createGain();
+  gn.gain.setValueAtTime(0.30, t);
+  gn.gain.exponentialRampToValueAtTime(0.0001, t + 0.085);
+  s.connect(bp); bp.connect(gn); gn.connect(master); s.start(t);
+}
+
+function sBlow(){
+  var a = audio(); if (!a) return;
+  var t = a.currentTime;
+  var s = a.createBufferSource(); s.buffer = noiseBuf;
+  var lp = a.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(500, t);
+  lp.frequency.exponentialRampToValueAtTime(2200, t + 0.16);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.16, t + 0.05);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+  s.connect(lp); lp.connect(g); g.connect(master); s.start(t);
+}
+
+function sCheer(){
+  var a = audio(); if (!a) return;
+  for (var i = 0; i < 5; i++){
+    (function(i){
+      var t = a.currentTime + i * 0.075;
+      var o = a.createOscillator(); o.type = 'triangle';
+      o.frequency.setValueAtTime(SCALE[i] * 1.0, t);
+      var g = a.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.26, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+      o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.6);
+    })(i);
+  }
+}
+
+/* ---------- たま ---------- */
+var bubbles = [], bits = [], rings = [], MAXB = 26, popped = 0;
+
+function unit(){ return Math.min(W, H); }
+
+function makeBubble(x, y, r){
+  var u = unit();
+  var rr = r || (u * 0.075 + Math.random() * u * 0.075);
+  rr = Math.max(34, Math.min(rr, u * 0.20));
+  return {
+    x: (x === undefined) ? 30 + Math.random() * (W - 60) : x,
+    y: (y === undefined) ? H + rr + Math.random() * 60 : y,
+    r: rr,
+    vy: -(14 + Math.random() * 18) * (40 / rr) * 0.9,
+    ph: Math.random() * 6.283,
+    amp: 12 + Math.random() * 22,
+    sp: 0.5 + Math.random() * 0.7,
+    hue: Math.floor(Math.random() * 360),
+    born: 0, sc: 0
+  };
+}
+
+function burst(b){
+  var n = 9 + Math.floor(Math.random() * 4);
+  for (var i = 0; i < n; i++){
+    var a = Math.random() * 6.283, v = 60 + Math.random() * 150;
+    bits.push({
+      x: b.x + Math.cos(a) * b.r * 0.55,
+      y: b.y + Math.sin(a) * b.r * 0.55,
+      vx: Math.cos(a) * v, vy: Math.sin(a) * v - 30,
+      r: 2.5 + Math.random() * 4.5,
+      hue: b.hue, life: 1
+    });
+  }
+  rings.push({ x: b.x, y: b.y, r: b.r * 0.7, hue: b.hue, life: 1 });
+}
+
+for (var i = 0; i < 7; i++){
+  var b = makeBubble(undefined, Math.random() * H);
+  b.sc = 1; bubbles.push(b);
+}
+
+/* ---------- 入力 ---------- */
+function hit(x, y){
+  for (var i = bubbles.length - 1; i >= 0; i--){
+    var b = bubbles[i];
+    var dx = x - b.x, dy = y - b.y;
+    if (dx * dx + dy * dy <= (b.r + 10) * (b.r + 10)) return i;
+  }
+  return -1;
+}
+
+function tap(x, y){
+  audio();
+  var i = hit(x, y);
+  if (i >= 0){
+    var b = bubbles[i];
+    bubbles.splice(i, 1);
+    burst(b);
+    var u = unit();
+    var k = Math.round((1 - Math.min(1, (b.r - 34) / Math.max(1, u * 0.20 - 34))) * (SCALE.length - 1));
+    sPop(SCALE[Math.max(0, Math.min(SCALE.length - 1, k))]);
+    popped++;
+    if (popped % 12 === 0){
+      sCheer();
+      for (var j = 0; j < 9; j++){
+        var nb = makeBubble(40 + Math.random() * (W - 80), H + 20 + Math.random() * 220);
+        bubbles.push(nb);
+      }
+    }
+  } else {
+    // 外れタップでも必ず何かが起きる
+    var s = makeBubble(x, y, unit() * 0.055 + Math.random() * unit() * 0.05);
+    s.sc = 0; s.vy = -(20 + Math.random() * 20);
+    bubbles.push(s);
+    rings.push({ x: x, y: y, r: 8, hue: s.hue, life: 1 });
+    sBlow();
+  }
+  if (bubbles.length > MAXB * 2) bubbles.splice(0, bubbles.length - MAXB * 2);
+}
+
+c.addEventListener('pointerdown', function(e){
+  e.preventDefault();
+  var r = c.getBoundingClientRect();
+  tap(e.clientX - r.left, e.clientY - r.top);
+}, { passive: false });
+c.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+
+/* ---------- もどる（700ms 長押し） ---------- */
+var home = document.getElementById('home'), ht = null;
+function hStart(e){
+  e.preventDefault(); e.stopPropagation();
+  home.classList.add('hold');
+  ht = setTimeout(function(){ location.href = '../../'; }, 700);
+}
+function hEnd(e){
+  if (e) e.stopPropagation();
+  home.classList.remove('hold');
+  if (ht){ clearTimeout(ht); ht = null; }
+}
+home.addEventListener('pointerdown', hStart, { passive: false });
+['pointerup','pointerleave','pointercancel'].forEach(function(k){
+  home.addEventListener(k, hEnd);
+});
+
+/* ---------- ループ ---------- */
+var last = 0;
+function frame(now){
+  var dt = last ? Math.min(0.05, (now - last) / 1000) : 0.016;
+  last = now;
+
+  ctx.fillStyle = SKY;
+  ctx.fillRect(0, 0, W, H);
+
+  while (bubbles.length < 9) bubbles.push(makeBubble());
+
+  for (var i = bubbles.length - 1; i >= 0; i--){
+    var b = bubbles[i];
+    b.ph += dt * b.sp;
+    b.y += b.vy * dt;
+    b.x += Math.cos(b.ph) * b.amp * dt;
+    if (b.sc < 1) b.sc = Math.min(1, b.sc + dt * 4.5);
+    if (b.x < b.r * 0.4) b.x = b.r * 0.4;
+    if (b.x > W - b.r * 0.4) b.x = W - b.r * 0.4;
+    if (b.y < -b.r - 40){ bubbles.splice(i, 1); continue; }
+    drawBubble(b);
+  }
+
+  for (var i = rings.length - 1; i >= 0; i--){
+    var g = rings[i];
+    g.life -= dt * 1.9;
+    if (g.life <= 0){ rings.splice(i, 1); continue; }
+    var t = 1 - g.life;
+    ctx.beginPath();
+    ctx.arc(g.x, g.y, g.r + t * g.r * 2.2, 0, 6.283);
+    ctx.strokeStyle = 'hsla(' + g.hue + ',75%,80%,' + (g.life * 0.72) + ')';
+    ctx.lineWidth = 2 + g.life * 3;
+    ctx.stroke();
+  }
+
+  for (var i = bits.length - 1; i >= 0; i--){
+    var p = bits[i];
+    p.life -= dt * 1.5;
+    if (p.life <= 0){ bits.splice(i, 1); continue; }
+    p.vy += 240 * dt;
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * p.life, 0, 6.283);
+    ctx.fillStyle = 'hsla(' + p.hue + ',80%,84%,' + (p.life * 0.85) + ')';
+    ctx.fill();
+  }
+
+  requestAnimationFrame(frame);
+}
+
+function drawBubble(b){
+  var r = b.r * (0.55 + 0.45 * b.sc);
+  var g = ctx.createRadialGradient(b.x - r * 0.34, b.y - r * 0.36, r * 0.08, b.x, b.y, r);
+  g.addColorStop(0,    'hsla(' + b.hue + ',92%,97%,0.92)');
+  g.addColorStop(0.42, 'hsla(' + b.hue + ',72%,82%,0.36)');
+  g.addColorStop(0.82, 'hsla(' + ((b.hue + 45) % 360) + ',70%,76%,0.28)');
+  g.addColorStop(1,    'hsla(' + ((b.hue + 80) % 360) + ',82%,88%,0.60)');
+  ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, 6.283);
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = 'hsla(' + b.hue + ',85%,99%,0.7)';
+  ctx.lineWidth = 1.6; ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.88)';
+  ctx.beginPath();
+  ctx.ellipse(b.x - r * 0.36, b.y - r * 0.42, r * 0.20, r * 0.13, -0.6, 0, 6.283);
+  ctx.fill();
+  ctx.globalAlpha = 0.4;
+  ctx.beginPath();
+  ctx.ellipse(b.x + r * 0.32, b.y + r * 0.40, r * 0.10, r * 0.065, -0.5, 0, 6.283);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
