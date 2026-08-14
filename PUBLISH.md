@@ -41,9 +41,20 @@ curl -sS --create-dirs -o games/shabondama/index.html \
 
 ### 2. 今週の1本を決める
 
-`games.json` の既存タイトルと重複しない題材を選ぶ。同じ操作の焼き直しも避ける。
-これまでに使った操作は `games.json` を見て確かめる。指でなぞる、傾ける、
-順番に押す、といった別の動作か、別の題材で組む。
+**まず `NEXT.md` を読む。** くろださんからの指定が入っていることがある。
+
+```
+curl -sS https://raw.githubusercontent.com/chlorine0528/omochabako/main/NEXT.md
+```
+
+見出しつきの項目が並んでいたら、**いちばん上の1件をそのとおりに作る。**
+書かれた条件は勝手に変えない。よかれと思って足したり引いたりしない。
+作り終えたら、その1件を `NEXT.md` から消して、`games.json` などと一緒に公開する
+（残しておくと翌週も同じものを作ってしまう）。
+
+`NEXT.md` に項目がなければ、自分で選ぶ。`games.json` の既存タイトルと重複しない題材で、
+同じ操作の焼き直しも避ける。これまでに使った操作は `games.json` を見て確かめる。
+指でなぞる、傾ける、順番に押す、といった別の動作か、別の題材で組む。
 
 ### 3. 作る
 
@@ -86,14 +97,15 @@ TZ=Asia/Tokyo python3 build.py
 
 ### 6. 公開する
 
-変更があるのは3ファイルだけ（新しいゲーム、`games.json`、`index.html`）。
+変更があるのは3ファイル（新しいゲーム、`games.json`、`index.html`）。
+`NEXT.md` の指定を消化したときは、消したあとの `NEXT.md` を足して4ファイルにする。
 
 まずコンテナ側で1つの文字列にまとめる。**base64url を使うこと。**
 素のbase64だと `+` と `/` が途中で化けて、必ずsha照合で落ちる。
 
 ```python
 import json, gzip, base64, pathlib, hashlib
-paths = ['games/<slug>/index.html', 'games.json', 'index.html']
+paths = ['games/<slug>/index.html', 'games.json', 'index.html']  # NEXT.md を消化したなら 'NEXT.md' も足す
 data = {p: pathlib.Path(p).read_text(encoding='utf-8') for p in paths}
 gz = gzip.compress(json.dumps(data, ensure_ascii=False).encode(), 9)
 u = base64.urlsafe_b64encode(gz).decode().rstrip('=')
