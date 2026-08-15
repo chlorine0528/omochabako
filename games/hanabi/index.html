@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#101b33">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>はなび</title>
+<style>
+  :root{ color-scheme: light; }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    width:100%; height:100%; overflow:hidden;
+    background:#131f38;
+    overscroll-behavior:none; touch-action:none;
+    -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent;
+    font-family: system-ui, -apple-system, "Segoe UI",
+      "Hiragino Kaku Gothic ProN", "Hiragino Sans",
+      "BIZ UDPGothic", "Yu Gothic Medium", "Yu Gothic", YuGothic,
+      Meiryo, "Noto Sans JP", sans-serif;
+  }
+  #c{ position:fixed; inset:0; width:100%; height:100%; display:block; }
+  #home{
+    position:fixed; top:max(10px, env(safe-area-inset-top)); left:max(10px, env(safe-area-inset-left));
+    width:40px; height:40px; padding:0; border:0; border-radius:50%;
+    background:rgba(255,255,255,.42); backdrop-filter:blur(2px);
+    display:grid; place-items:center; cursor:pointer; z-index:5;
+    touch-action:none; -webkit-tap-highlight-color:transparent;
+  }
+  #home svg{ width:34px; height:34px; display:block; }
+  #home .trk{ fill:none; stroke:rgba(74,92,96,.22); stroke-width:2.5; }
+  #home .rng{
+    fill:none; stroke:#4a5c60; stroke-width:2.5; stroke-linecap:round;
+    stroke-dasharray:94.2; stroke-dashoffset:94.2;
+    transform:rotate(-90deg); transform-origin:50% 50%;
+    transition:stroke-dashoffset .04s linear;
+  }
+  #home.hold .rng{ stroke-dashoffset:0; transition:stroke-dashoffset .7s linear; }
+  #home .ico{ fill:#4a5c60; opacity:.72; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="home" aria-label="おもちゃばこに もどる">
+  <svg viewBox="0 0 36 36" aria-hidden="true">
+    <circle class="trk" cx="18" cy="18" r="15"/>
+    <circle class="rng" cx="18" cy="18" r="15"/>
+    <path class="ico" d="M18 9.4 10.2 16v9.1c0 .6.5 1.1 1.1 1.1h4.1v-5.3h5.2v5.3h4.1c.6 0 1.1-.5 1.1-1.1V16z"/>
+  </svg>
+</button>
+<script>
+(function(){
+'use strict';
+
+/* ---------- 画面 ---------- */
+var c = document.getElementById('c'), ctx = c.getContext('2d');
+var W = 0, H = 0, DPR = 1, SKY = null;
+var groundY = 0, zoneTop = 0, stars = [], hills = [];
+
+/* 筒。色と音程は固定で、押すたびに同じ筒からは同じ色が上がる */
+var TUBES = [
+  { hue:   6, sat: 86, f:  523.25, kind: 0 },
+  { hue:  34, sat: 92, f:  587.33, kind: 1 },
+  { hue:  88, sat: 74, f:  659.25, kind: 2 },
+  { hue: 168, sat: 76, f:  783.99, kind: 0 },
+  { hue: 202, sat: 76, f:  880.00, kind: 2 },
+  { hue: 322, sat: 74, f: 1046.50, kind: 1 }
+];
+var i, k;
+for (i = 0; i < TUBES.length; i++){
+  TUBES[i].press = 0; TUBES[i].cool = 0; TUBES[i].bob = i * 0.7;
+  TUBES[i].x = 0; TUBES[i].y = 0; TUBES[i].w = 0; TUBES[i].h = 0;
+}
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  var r = c.getBoundingClientRect();
+  W = Math.max(1, r.width); H = Math.max(1, r.height);
+  c.width = Math.round(W * DPR); c.height = Math.round(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  groundY = H - Math.max(62, H * 0.13);
+  zoneTop = groundY - Math.max(124, H * 0.22);
+
+  /* 濃い藍から、地平線に向かってすこしだけ暖かい色に落とす */
+  SKY = ctx.createLinearGradient(0, 0, 0, groundY + Math.max(10, H * 0.02));
+  SKY.addColorStop(0,    '#101b33');
+  SKY.addColorStop(0.44, '#182742');
+  SKY.addColorStop(0.74, '#2c3348');
+  SKY.addColorStop(0.90, '#4c4038');
+  SKY.addColorStop(1,    '#6b5038');
+
+  var tw = Math.max(26, Math.min(50, (W / TUBES.length) * 0.66));
+  var th = Math.max(38, Math.min(80, (groundY - zoneTop) * 0.44));
+  for (var i2 = 0; i2 < TUBES.length; i2++){
+    var t = TUBES[i2];
+    t.x = W * (i2 + 0.5) / TUBES.length;
+    t.y = groundY + Math.max(6, H * 0.012);
+    t.w = tw; t.h = th;
+  }
+
+  stars = [];
+  var ns = Math.round(Math.min(52, W * H / 13000));
+  for (var s = 0; s < ns; s++){
+    stars.push({
+      x: Math.random() * W,
+      y: Math.random() * Math.max(40, zoneTop - 20),
+      r: 0.7 + Math.random() * 1.5,
+      ph: Math.random() * 6.283,
+      sp: 0.5 + Math.random() * 1.1,
+      glow: 0
+    });
+  }
+
+  hills = [
+    { cx: W * 0.22, ry: Math.max(30, H * 0.055), rx: W * 0.42, col: '#1b2130' },
+    { cx: W * 0.78, ry: Math.max(24, H * 0.045), rx: W * 0.38, col: '#171c29' }
+  ];
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', function(){ setTimeout(resize, 120); });
+if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+resize();
+
+/* ---------- 音 ---------- */
+var ac = null, master = null, noiseBuf = null;
+
+function audio(){
+  if (ac){ if (ac.state === 'suspended') ac.resume(); return ac; }
+  var AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  try { ac = new AC(); } catch(e){ return null; }
+  var comp = ac.createDynamicsCompressor();
+  comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 10;
+  comp.attack.value = 0.003; comp.release.value = 0.24;
+  master = ac.createGain(); master.gain.value = 0.5;
+  master.connect(comp); comp.connect(ac.destination);
+  var n = Math.floor(ac.sampleRate * 0.5);
+  noiseBuf = ac.createBuffer(1, n, ac.sampleRate);
+  var d = noiseBuf.getChannelData(0);
+  for (var j = 0; j < n; j++) d[j] = Math.random() * 2 - 1;
+  return ac;
+}
+
+function detune(){ return 1 + (Math.random() - 0.5) * 0.05; }
+
+/* 押した瞬間の「シュッ」。遅延ゼロでここが鳴る */
+function sLaunch(){
+  var a = audio(); if (!a) return;
+  var t = a.currentTime;
+  var s = a.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+  var hp = a.createBiquadFilter(); hp.type = 'highpass';
+  hp.frequency.setValueAtTime(700, t);
+  hp.frequency.exponentialRampToValueAtTime(2600, t + 0.13);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.26, t + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.19);
+  s.connect(hp); hp.connect(g); g.connect(master);
+  s.start(t); s.stop(t + 0.21);
+}
+
+/* 昇っていく「ヒュー」 */
+function sRise(f, dur){
+  var a = audio(); if (!a) return;
+  var t = a.currentTime, d = Math.max(0.18, dur);
+  var o = a.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(f * 0.45 * detune(), t);
+  o.frequency.exponentialRampToValueAtTime(f * 1.35, t + d);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.11, t + 0.05);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.02);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + d + 0.05);
+}
+
+/* 開く「ポン」とパチパチ */
+function sPop(f){
+  var a = audio(); if (!a) return;
+  var t = a.currentTime;
+  var o = a.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(f * 0.9 * detune(), t);
+  o.frequency.exponentialRampToValueAtTime(Math.max(58, f * 0.20), t + 0.22);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.40, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.36);
+
+  var s = a.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+  var lp = a.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(2400, t);
+  lp.frequency.exponentialRampToValueAtTime(320, t + 0.25);
+  var gn = a.createGain();
+  gn.gain.setValueAtTime(0.28, t);
+  gn.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+  s.connect(lp); lp.connect(gn); gn.connect(master);
+  s.start(t); s.stop(t + 0.28);
+}
+
+function sCrackle(){
+  var a = audio(); if (!a) return;
+  if (!allow(10)) return;
+  for (var j = 0; j < 5; j++){
+    var t = a.currentTime + 0.10 + j * 0.062 + Math.random() * 0.03;
+    var s = a.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+    var bp = a.createBiquadFilter(); bp.type = 'bandpass';
+    bp.frequency.value = 2600 + Math.random() * 2600; bp.Q.value = 5;
+    var g = a.createGain();
+    g.gain.setValueAtTime(0.14, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+    s.connect(bp); bp.connect(g); g.connect(master);
+    s.start(t); s.stop(t + 0.06);
+  }
+}
+
+/* 空を押したときの、線香花火のちいさな音 */
+function sTwinkle(){
+  var a = audio(); if (!a) return;
+  var t = a.currentTime;
+  var f = [1174.66, 1318.51, 1567.98, 1760.00, 2093.00][Math.floor(Math.random() * 5)];
+  var o = a.createOscillator(); o.type = 'triangle';
+  o.frequency.setValueAtTime(f * detune(), t);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.20, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.44);
+
+  var s = a.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+  var bp = a.createBiquadFilter(); bp.type = 'bandpass';
+  bp.frequency.value = 5200; bp.Q.value = 4;
+  var gn = a.createGain();
+  gn.gain.setValueAtTime(0.10, t);
+  gn.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+  s.connect(bp); bp.connect(gn); gn.connect(master);
+  s.start(t); s.stop(t + 0.14);
+}
+
+/* 二次的な音だけ間引く。押した瞬間の音は絶対に間引かない */
+var voices = [];
+function allow(max){
+  var t = (window.performance && performance.now) ? performance.now() : 0;
+  while (voices.length && t - voices[0] > 500) voices.shift();
+  if (voices.length >= max) return false;
+  voices.push(t); return true;
+}
+
+/* ---------- たま ---------- */
+var shells = [], sparks = [], sparklers = [], booms = [], flash = 0;
+var MAXSP = 340, GRAV = 2800;
+
+function nearestTube(x){
+  var best = 0, bd = 1e9;
+  for (var j = 0; j < TUBES.length; j++){
+    var d = Math.abs(TUBES[j].x - x);
+    if (d < bd){ bd = d; best = j; }
+  }
+  return best;
+}
+
+function mouthSparks(t){
+  var my = t.y - t.h;
+  var n = 8;
+  for (var j = 0; j < n; j++){
+    var a2 = -1.5708 + (Math.random() - 0.5) * 1.5;
+    var v = 70 + Math.random() * 160;
+    sparks.push({
+      x: t.x + (Math.random() - 0.5) * t.w * 0.5, y: my,
+      px: t.x, py: my,
+      vx: Math.cos(a2) * v, vy: Math.sin(a2) * v,
+      g: 900, dr: 2.4, w: 1.6 + Math.random() * 1.4,
+      hue: t.hue, sat: 90, life: 1
+    });
+  }
+}
+
+function launch(idx){
+  var t = TUBES[idx];
+  t.press = 1; t.cool = 1;
+  mouthSparks(t);            /* 1段目。押した指のところで、すぐに何かが起きる */
+  sLaunch();
+
+  var apex = H * (0.14 + Math.random() * 0.22);
+  var rise = Math.max(80, (t.y - t.h) - apex);
+  var vy0 = Math.sqrt(2 * GRAV * rise);
+  var my = t.y - t.h;
+  shells.push({
+    x: t.x, y: my, px: t.x, py: my,
+    vx: (Math.random() - 0.5) * 46, vy: -vy0,
+    hue: t.hue, sat: t.sat, f: t.f, kind: t.kind, sp: 0
+  });
+  sRise(t.f, vy0 / GRAV);
+}
+
+function ring(s, n, spd, spread, hue, sat, grav, drag, wid){
+  for (var j = 0; j < n; j++){
+    var a2 = (j / n) * 6.283 + Math.random() * 0.22;
+    var v = spd * (1 - spread * 0.5 + Math.random() * spread);
+    sparks.push({
+      x: s.x, y: s.y, px: s.x, py: s.y,
+      vx: Math.cos(a2) * v + s.vx * 0.22,
+      vy: Math.sin(a2) * v + s.vy * 0.22,
+      g: grav, dr: drag, w: wid, hue: hue, sat: sat, life: 1
+    });
+  }
+}
+
+function burst(s){
+  sPop(s.f); sCrackle();
+  flash = Math.min(0.5, flash + 0.16);
+  booms.push({ x: s.x, y: s.y, hue: s.hue, sat: s.sat, life: 1, r: Math.max(46, Math.min(W, H) * 0.14) });
+  var room = MAXSP - sparks.length;
+  var scale = room > 190 ? 1 : (room > 100 ? 0.62 : 0.36);
+
+  if (s.kind === 0){          /* 菊。まるく広がる */
+    ring(s, Math.round(38 * scale), 272, 0.34, s.hue, s.sat, 220, 1.05, 4.4);
+    ring(s, Math.round(16 * scale), 128, 0.42, (s.hue + 22) % 360, 92, 200, 1.15, 3.8);
+  } else if (s.kind === 1){   /* 柳。ゆっくり垂れて落ちる */
+    ring(s, Math.round(28 * scale), 208, 0.5, s.hue, s.sat, 320, 0.72, 4.6);
+    ring(s, Math.round(12 * scale), 88, 0.6, 44, 92, 290, 0.80, 3.8);
+  } else {                    /* 二重。内と外で色が変わる */
+    ring(s, Math.round(22 * scale), 142, 0.24, (s.hue + 42) % 360, 88, 205, 1.20, 3.9);
+    ring(s, Math.round(30 * scale), 288, 0.24, s.hue, s.sat, 215, 1.05, 4.4);
+  }
+  for (var j = 0; j < stars.length; j++){
+    var d = Math.abs(stars[j].x - s.x) + Math.abs(stars[j].y - s.y);
+    if (d < 240) stars[j].glow = Math.max(stars[j].glow, 1 - d / 240);
+  }
+}
+
+/* ---------- 入力 ---------- */
+var lastInput = 0, autoAt = 0;
+
+function now(){ return (window.performance && performance.now) ? performance.now() : 0; }
+
+function tap(x, y, wide){
+  audio();
+  lastInput = now();
+  if (wide){
+    for (var j = 0; j < TUBES.length; j++) launch(j);
+    return;
+  }
+  if (y >= zoneTop){
+    launch(nearestTube(x));
+  } else {
+    /* 空を押しても必ず何かが起きる。線香花火がひとつ灯る */
+    sparklers.push({ x: x, y: y, life: 1, em: 0 });
+    for (var s2 = 0; s2 < stars.length; s2++){
+      var d = Math.abs(stars[s2].x - x) + Math.abs(stars[s2].y - y);
+      if (d < 130) stars[s2].glow = Math.max(stars[s2].glow, 1 - d / 130);
+    }
+    for (var q = 0; q < 6; q++){
+      var a2 = Math.random() * 6.283, v = 20 + Math.random() * 55;
+      sparks.push({
+        x: x, y: y, px: x, py: y,
+        vx: Math.cos(a2) * v, vy: Math.sin(a2) * v,
+        g: 210, dr: 2.0, w: 1.5, hue: 44, sat: 92, life: 1
+      });
+    }
+    sTwinkle();
+  }
+}
+
+c.addEventListener('pointerdown', function(e){
+  e.preventDefault();
+  var r = c.getBoundingClientRect();
+  var wide = (e.width && e.width > 46) || (e.height && e.height > 46);
+  tap(e.clientX - r.left, e.clientY - r.top, wide);
+}, { passive: false });
+c.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+
+/* ---------- もどる（700ms 長押し） ---------- */
+var home = document.getElementById('home'), ht = null;
+function hStart(e){
+  e.preventDefault(); e.stopPropagation();
+  home.classList.add('hold');
+  ht = setTimeout(function(){ location.href = '../../'; }, 700);
+}
+function hEnd(e){
+  if (e) e.stopPropagation();
+  home.classList.remove('hold');
+  if (ht){ clearTimeout(ht); ht = null; }
+}
+home.addEventListener('pointerdown', hStart, { passive: false });
+['pointerup','pointerleave','pointercancel'].forEach(function(kk){
+  home.addEventListener(kk, hEnd);
+});
+
+/* ---------- 絵 ---------- */
+function drawGround(){
+  for (var j = 0; j < hills.length; j++){
+    var hl = hills[j];
+    ctx.beginPath();
+    ctx.ellipse(hl.cx, groundY + hl.ry * 0.55, hl.rx, hl.ry, 0, 0, 6.283);
+    ctx.fillStyle = hl.col; ctx.fill();
+  }
+  ctx.fillStyle = '#141924';
+  ctx.fillRect(0, groundY + Math.max(4, H * 0.008), W, H);
+}
+
+function drawTube(t){
+  var lift = t.press * 0.24;
+  var bh = t.h * (1 - lift) * (0.94 + 0.06 * (1 - t.cool));
+  var bob = Math.sin(t.bob) * 1.6 * idleWave;
+  var by = t.y + bob, ty = by - bh;
+  var hw = t.w * (0.5 + lift * 0.34);
+
+  /* 台 */
+  ctx.beginPath();
+  ctx.ellipse(t.x, by, hw * 1.25, Math.max(4, t.w * 0.16), 0, 0, 6.283);
+  ctx.fillStyle = 'hsl(' + t.hue + ',18%,17%)'; ctx.fill();
+
+  /* 胴 */
+  ctx.beginPath();
+  ctx.moveTo(t.x - hw, by);
+  ctx.lineTo(t.x - hw * 0.82, ty + 5);
+  ctx.quadraticCurveTo(t.x, ty - 1, t.x + hw * 0.82, ty + 5);
+  ctx.lineTo(t.x + hw, by);
+  ctx.closePath();
+  ctx.fillStyle = 'hsl(' + t.hue + ',26%,24%)'; ctx.fill();
+
+  /* 色の帯。どの筒がどの色かが、光っていなくてもわかる */
+  var bandY = ty + bh * 0.36;
+  ctx.beginPath();
+  ctx.moveTo(t.x - hw * 0.9, bandY);
+  ctx.lineTo(t.x + hw * 0.9, bandY);
+  ctx.lineTo(t.x + hw * 0.94, bandY + bh * 0.22);
+  ctx.lineTo(t.x - hw * 0.94, bandY + bh * 0.22);
+  ctx.closePath();
+  ctx.fillStyle = 'hsl(' + t.hue + ',' + t.sat + '%,' + (46 + t.press * 22) + '%)';
+  ctx.fill();
+
+  /* 口。いつも小さく灯っていて、押すと強く光る */
+  var glow = 0.34 + t.press * 0.66 + idleWave * 0.16 * (0.5 + 0.5 * Math.sin(t.bob * 1.6));
+  var rg = ctx.createRadialGradient(t.x, ty + 3, 1, t.x, ty + 3, hw * (2.0 + t.press * 2.4));
+  rg.addColorStop(0, 'hsla(' + t.hue + ',95%,88%,' + Math.min(0.95, glow) + ')');
+  rg.addColorStop(0.45, 'hsla(' + t.hue + ',92%,66%,' + glow * 0.42 + ')');
+  rg.addColorStop(1, 'hsla(' + t.hue + ',90%,60%,0)');
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.beginPath();
+  ctx.arc(t.x, ty + 3, hw * (2.0 + t.press * 2.4), 0, 6.283);
+  ctx.fillStyle = rg; ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+
+  ctx.beginPath();
+  ctx.ellipse(t.x, ty + 3, hw * 0.8, Math.max(3, t.w * 0.14), 0, 0, 6.283);
+  ctx.fillStyle = 'hsl(' + t.hue + ',94%,' + (72 + t.press * 22) + '%)';
+  ctx.fill();
+}
+
+/* ---------- ループ ---------- */
+var last = 0, idleWave = 0;
+
+function frame(tnow){
+  var dt = last ? Math.min(0.05, (tnow - last) / 1000) : 0.016;
+  last = tnow;
+  if (!lastInput) lastInput = tnow;
+
+  var idle = (tnow - lastInput) / 1000;
+  idleWave += (( idle > 3 ? 1 : 0 ) - idleWave) * Math.min(1, dt * 2.2);
+  /* 3秒さわらないと、筒が自分から上げてさそう */
+  if (idle > 3.5 && tnow > autoAt){
+    autoAt = tnow + 1600 + Math.random() * 1400;
+    launch(Math.floor(Math.random() * TUBES.length));
+  }
+
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = SKY;
+  ctx.fillRect(0, 0, W, H);
+
+  /* 星 */
+  for (var j = 0; j < stars.length; j++){
+    var st = stars[j];
+    st.ph += dt * st.sp;
+    if (st.glow > 0) st.glow = Math.max(0, st.glow - dt * 1.1);
+    var a2 = 0.30 + 0.26 * Math.sin(st.ph) + st.glow * 0.7;
+    ctx.beginPath();
+    ctx.arc(st.x, st.y, st.r * (1 + st.glow * 0.9), 0, 6.283);
+    ctx.fillStyle = 'rgba(255,247,226,' + Math.min(1, a2) + ')';
+    ctx.fill();
+  }
+
+  /* 玉。尾を引いて昇る */
+  ctx.globalCompositeOperation = 'lighter';
+  for (var j2 = shells.length - 1; j2 >= 0; j2--){
+    var s = shells[j2];
+    s.px = s.x; s.py = s.y;
+    s.vy += GRAV * dt;
+    s.x += s.vx * dt; s.y += s.vy * dt;
+    s.sp += dt;
+    if (sparks.length < MAXSP - 40 && s.sp > 0.016){
+      s.sp = 0;
+      sparks.push({
+        x: s.x, y: s.y, px: s.px, py: s.py,
+        vx: (Math.random() - 0.5) * 40, vy: 60 + Math.random() * 60,
+        g: 260, dr: 3.4, w: 1.8, hue: s.hue, sat: 80, life: 0.55
+      });
+    }
+    ctx.beginPath();
+    ctx.moveTo(s.px, s.py); ctx.lineTo(s.x, s.y);
+    ctx.strokeStyle = 'hsla(' + s.hue + ',92%,86%,0.95)';
+    ctx.lineWidth = 3.4; ctx.lineCap = 'round'; ctx.stroke();
+    if (s.vy >= 0 || s.y < 6){ shells.splice(j2, 1); burst(s); }
+  }
+
+  /* 線香花火 */
+  for (var j3 = sparklers.length - 1; j3 >= 0; j3--){
+    var sk = sparklers[j3];
+    sk.life -= dt * 0.62;
+    if (sk.life <= 0){ sparklers.splice(j3, 1); continue; }
+    sk.em += dt;
+    if (sk.em > 0.055 && sparks.length < MAXSP - 20){
+      sk.em = 0;
+      var a3 = Math.random() * 6.283, v3 = 14 + Math.random() * 46;
+      sparks.push({
+        x: sk.x, y: sk.y, px: sk.x, py: sk.y,
+        vx: Math.cos(a3) * v3, vy: Math.sin(a3) * v3,
+        g: 190, dr: 2.2, w: 1.4, hue: 42, sat: 94, life: 0.8
+      });
+    }
+    ctx.beginPath();
+    ctx.arc(sk.x, sk.y, 2.4 + sk.life * 3.4, 0, 6.283);
+    ctx.fillStyle = 'hsla(46,96%,84%,' + (0.5 + sk.life * 0.45) + ')';
+    ctx.fill();
+  }
+
+  /* 開いた瞬間の、まんなかの光 */
+  for (var jb = booms.length - 1; jb >= 0; jb--){
+    var bm = booms[jb];
+    bm.life -= dt * 2.1;
+    if (bm.life <= 0){ booms.splice(jb, 1); continue; }
+    var br = bm.r * (1.55 - bm.life * 1.05);
+    var bg = ctx.createRadialGradient(bm.x, bm.y, 1, bm.x, bm.y, br);
+    var bl = bm.life * bm.life;
+    bg.addColorStop(0,    'hsla(' + bm.hue + ',92%,86%,' + (bl * 0.95) + ')');
+    bg.addColorStop(0.32, 'hsla(' + bm.hue + ',' + bm.sat + '%,68%,' + (bl * 0.44) + ')');
+    bg.addColorStop(1,    'hsla(' + bm.hue + ',' + bm.sat + '%,60%,0)');
+    ctx.beginPath(); ctx.arc(bm.x, bm.y, br, 0, 6.283);
+    ctx.fillStyle = bg; ctx.fill();
+  }
+
+  /* 火の粉 */
+  ctx.lineCap = 'round';
+  for (var j4 = sparks.length - 1; j4 >= 0; j4--){
+    var p = sparks[j4];
+    p.life -= dt * p.dr * 0.62;
+    if (p.life <= 0){ sparks.splice(j4, 1); continue; }
+    var dg = Math.pow(0.50, dt);
+    p.vx *= dg; p.vy = p.vy * dg + p.g * dt;
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.y > groundY + 30){ sparks.splice(j4, 1); continue; }
+    var lf = Math.max(0, Math.min(1, p.life));
+    var wd = p.w * (0.34 + lf * 0.66);
+    /* 尾。速いほど長く伸び、遅くなると点に落ちつく */
+    p.px = p.x - p.vx * 0.115; p.py = p.y - p.vy * 0.115;
+    /* にじみ */
+    if (lf > 0.24){
+      ctx.beginPath();
+      ctx.moveTo(p.px, p.py); ctx.lineTo(p.x, p.y);
+      ctx.strokeStyle = 'hsla(' + p.hue + ',' + p.sat + '%,58%,' + (lf * 0.16) + ')';
+      ctx.lineWidth = wd * 2.6; ctx.stroke();
+    }
+    /* 芯。開いた直後だけ白く、すぐに色に落ちつく */
+    var li = lf > 0.93 ? 92 : (47 + lf * 19);
+    ctx.beginPath();
+    ctx.moveTo(p.px, p.py); ctx.lineTo(p.x, p.y);
+    ctx.strokeStyle = 'hsla(' + p.hue + ',' + p.sat + '%,' + li + '%,' + (0.26 + lf * 0.70) + ')';
+    ctx.lineWidth = wd; ctx.stroke();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+
+  drawGround();
+
+  for (var j5 = 0; j5 < TUBES.length; j5++){
+    var t = TUBES[j5];
+    t.bob += dt * (1.1 + j5 * 0.07);
+    if (t.press > 0) t.press = Math.max(0, t.press - dt * 3.2);
+    if (t.cool > 0) t.cool = Math.max(0, t.cool - dt * 1.05);
+    drawTube(t);
+  }
+
+  /* 開いた瞬間に画面がすこし明るくなる。音がなくても手応えが読める */
+  if (flash > 0){
+    flash = Math.max(0, flash - dt * 1.5);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = 'rgba(255,238,206,' + (flash * 0.13) + ')';
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  if (sparks.length > MAXSP) sparks.splice(0, sparks.length - MAXSP);
+  if (shells.length > 18) shells.splice(0, shells.length - 18);
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
