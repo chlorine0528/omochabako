@@ -128,26 +128,42 @@ function sBlow(){
   s.connect(lp); lp.connect(g); g.connect(master); s.start(t);
 }
 
-function sCheer(){
+/* たくさん上がってくるときの、低くひろがる息の音。
+   上りの音階（歓声）は使わない。できたことを褒める音にしない */
+function sRise(){
   var a = audio(); if (!a) return;
-  for (var i = 0; i < 5; i++){
-    (function(i){
-      var t = a.currentTime + i * 0.075;
-      var o = a.createOscillator(); o.type = 'triangle';
-      o.frequency.setValueAtTime(SCALE[i] * 1.0, t);
-      var g = a.createGain();
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.26, t + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
-      o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.6);
-    })(i);
-  }
+  var t = a.currentTime;
+  var s = a.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+  var lp = a.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(320, t);
+  lp.frequency.exponentialRampToValueAtTime(1400, t + 0.6);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.13, t + 0.18);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
+  s.connect(lp); lp.connect(g); g.connect(master);
+  s.start(t); s.stop(t + 0.95);
+}
+
+/* 2つがくっついた瞬間の、低くやわらかい音 */
+function sMerge(f){
+  var a = audio(); if (!a) return;
+  var t = a.currentTime;
+  var o = a.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(f * 0.7, t);
+  o.frequency.exponentialRampToValueAtTime(f * 0.46, t + 0.5);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.26, t + 0.05);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.62);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.66);
 }
 
 /* ---------- たま ---------- */
 var bubbles = [], bits = [], rings = [], MAXB = 26, popped = 0;
 
 function unit(){ return Math.min(W, H); }
+function now(){ return (window.performance && performance.now) ? performance.now() : 0; }
 
 function makeBubble(x, y, r){
   var u = unit();
@@ -196,11 +212,61 @@ function hit(x, y){
   return -1;
 }
 
+/* ひと工夫。2本の指で同時に押すと、そのあいだに大きいのがひとつ生まれる。
+   1本目はいつもどおり即座に反応するので、待たされる感じは出ない。
+   大きいのを割ると、小さいのがいくつも出てくる */
+var lastX = 0, lastY = 0, lastAt = -1e9;
+
+function pairUp(x, y){
+  var t = now();
+  if (t - lastAt < 170){
+    lastAt = -1e9;
+    var mx = (lastX + x) / 2, my = (lastY + y) / 2;
+    var u = unit();
+    var big = makeBubble(mx, my, u * 0.26);
+    big.r = u * 0.26;              /* makeBubble の上限より大きくする */
+    big.big = 1; big.sc = 0.15;
+    big.vy = -(9 + Math.random() * 9);
+    bubbles.push(big);
+    rings.push({ x: lastX, y: lastY, r: 10, hue: big.hue, life: 1 });
+    rings.push({ x: x, y: y, r: 10, hue: big.hue, life: 1 });
+    for (var j = 0; j < 12; j++){
+      var ang = Math.random() * 6.283;
+      bits.push({
+        x: mx + Math.cos(ang) * big.r * 0.8, y: my + Math.sin(ang) * big.r * 0.8,
+        vx: -Math.cos(ang) * 55, vy: -Math.sin(ang) * 55,
+        r: 2 + Math.random() * 3, hue: big.hue, life: 1
+      });
+    }
+    sMerge(SCALE[0]);
+    return;
+  }
+  lastX = x; lastY = y; lastAt = t;
+}
+
 function tap(x, y){
   audio();
+  pairUp(x, y);          /* 2本目の指なら、ここで大きいのが生まれる */
   var i = hit(x, y);
   if (i >= 0){
     var b = bubbles[i];
+    /* 大きいものを割ると、小さいのがいくつも生まれる */
+    if (b.big){
+      bubbles.splice(i, 1);
+      burst(b);
+      sPop(SCALE[SCALE.length - 1]);
+      var n = 3 + Math.floor(Math.random() * 3);
+      for (var q = 0; q < n; q++){
+        var nb = makeBubble(b.x + (Math.random() - 0.5) * b.r * 1.4,
+                            b.y + (Math.random() - 0.5) * b.r * 1.4,
+                            b.r * (0.30 + Math.random() * 0.16));
+        nb.sc = 0.2; nb.hue = (b.hue + q * 28) % 360;
+        bubbles.push(nb);
+      }
+      sRise();
+      if (bubbles.length > MAXB * 2) bubbles.splice(0, bubbles.length - MAXB * 2);
+      return;
+    }
     bubbles.splice(i, 1);
     burst(b);
     var u = unit();
@@ -208,7 +274,7 @@ function tap(x, y){
     sPop(SCALE[Math.max(0, Math.min(SCALE.length - 1, k))]);
     popped++;
     if (popped % 12 === 0){
-      sCheer();
+      sRise();
       for (var j = 0; j < 9; j++){
         var nb = makeBubble(40 + Math.random() * (W - 80), H + 20 + Math.random() * 220);
         bubbles.push(nb);
