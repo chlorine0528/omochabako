@@ -105,18 +105,25 @@ TZ=Asia/Tokyo python3 build.py
 変更があるのは3ファイル（新しいゲーム、`games.json`、`index.html`）。
 `NEXT.md` の指定を消化したときは、消したあとの `NEXT.md` を足して4ファイルにする。
 
-まずコンテナ側で1つの文字列にまとめる。**base64url を使うこと。**
-素のbase64だと `+` と `/` が途中で化けて、必ずsha照合で落ちる。
+まずコンテナ側で1つの文字列にまとめる。
 
-```python
-import json, gzip, base64, pathlib, hashlib
-paths = ['games/<slug>/index.html', 'games.json', 'index.html']  # NEXT.md を消化したなら 'NEXT.md' も足す
-data = {p: pathlib.Path(p).read_text(encoding='utf-8') for p in paths}
-gz = gzip.compress(json.dumps(data, ensure_ascii=False).encode(), 9)
-u = base64.urlsafe_b64encode(gz).decode().rstrip('=')
-print(len(u), hashlib.sha256(u.encode()).hexdigest()[:16])
-pathlib.Path('/tmp/payload.txt').write_text(u)
 ```
+python3 tools/pack_payload.py /tmp/payload.txt games/<slug>/index.html games.json index.html
+```
+
+`NEXT.md` を消化したなら、引数の最後に `NEXT.md` も足す。
+文字数と照合用のshaが出るので、shaは控えておく。
+
+次に、その文字列を切り分ける。**1つが2000字を超えないように切ること。**
+長い1本のまま渡すと、途中の文字が化けて必ずsha照合で落ちる。
+（1万字を超えると、ほぼ毎回落ちる。8000字でも落ちたことがある。）
+
+```
+python3 tools/split_payload.py /tmp/payload.txt 8
+```
+
+`/tmp/q1.txt` から `/tmp/q8.txt` が出る。**1つずつ `cat` して読む。**
+2つ以上をまとめて出すと、切れ目の文字を取りこぼす。
 
 次に ToolSearch で Zapier のツールを読み込む。
 
@@ -128,16 +135,20 @@ select:mcp__Zapier__execute_zapier_write_action
 
 - `selected_api`: `CodeCLIAPI`
 - `action`: `01929fad-d3dd-62c2-52ed-7868d5fcc691`（Run Javascript）
-- `params.input`: `t`（トークン）、`payload`（上の文字列）、`sha`（上のsha）、`msg`（`add: <title>`）
+- `params.input`: `t`（トークン）、`p1` から `p8`（切り分けた文字列）、
+  `sha`（`pack_payload.py` が出したsha）、`msg`（`add: <title>`）
 - `params.code`: 下のJS
 
 ```js
 const zlib = require('zlib');
 const crypto = require('crypto');
+const h = s => crypto.createHash('sha256').update(s).digest('hex');
 const T = inputData.t, R = '/repos/chlorine0528/omochabako';
-const u = inputData.payload;
-const sha = crypto.createHash('sha256').update(u).digest('hex').slice(0,16);
-if (sha !== inputData.sha) return { error: 'payload sha mismatch', got: sha, want: inputData.sha, len: u.length };
+const parts = [inputData.p1, inputData.p2, inputData.p3, inputData.p4,
+               inputData.p5, inputData.p6, inputData.p7, inputData.p8].filter(Boolean);
+const u = parts.join('');
+const sha = h(u).slice(0,16);
+if (sha !== inputData.sha) return { error: 'payload sha mismatch', got: sha, want: inputData.sha, len: u.length, parts: parts.map(p => h(p).slice(0,8) + ':' + p.length) };
 const files = JSON.parse(zlib.gunzipSync(Buffer.from(u, 'base64url')).toString('utf8'));
 const api = async (p, opt = {}) => {
   const r = await fetch('https://api.github.com' + p, Object.assign({}, opt, {
@@ -169,8 +180,19 @@ const rf = await api(R + '/git/refs/heads/main', { method: 'PATCH', body: JSON.s
 return { ok: true, before: head.slice(0,7), after: rf.object.sha.slice(0,7) };
 ```
 
-`payload sha mismatch` が返ったら、文字列が途中で化けている。作り直して送り直す。
-refを書き換える前に落ちた場合は、リポジトリには何も入っていないので、そのままやり直してよい。
+`payload sha mismatch` が返ったら、どこかの文字列が途中で化けている。
+このとき `parts` に、届いた側のchunkごとのshaと文字数が並んで返る。
+`split_payload.py` が出したshaと突き合わせれば、化けたchunkがすぐ分かるので、
+そこだけ `cat` して送り直す。落ちるのは照合の時点なので、リポジトリには何も入っていない。
+
+よくある落ち方は2つ。1つは、chunkの文字数は合っているのに中身が違う場合で、
+これは1文字が別の文字に置き換わっている。もう1つは、隣り合うchunkで
+文字数が2字ずれている場合で、これは切れ目の文字を取りこぼしている。
+どちらも `cat` し直せば直る。
+
+ファイルが多いときは、1回の呼び出しに詰め込まず、2回に分けて公開してよい。
+`build.py` を回したあとなら、ゲーム本体だけを先に送り、`games.json` と
+`index.html` をあとから送っても、途中の状態が数分見えるだけで問題は起きない。
 
 ### 7. 公開を確かめる
 
