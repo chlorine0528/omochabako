@@ -196,21 +196,27 @@ function sChirp(){
 }
 
 // たくさん咲いたときのごほうび
-function sCheer(){
+/* ちょうちょが散るときの、やわらかい風の音。
+   上りの音階（歓声）は使わない。できたことを褒める音にしない */
+function sWind(){
   var a = audio(); if (!a) return;
-  var seq = [523.25, 659.25, 783.99, 1046.50, 1318.51];
-  for (var i = 0; i < seq.length; i++){
-    (function(i){
-      var t = a.currentTime + i * 0.08;
-      var o = a.createOscillator(); o.type = 'triangle';
-      o.frequency.setValueAtTime(seq[i], t);
-      var g = a.createGain();
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.24, t + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
-      o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.65);
-    })(i);
-  }
+  var t = a.currentTime;
+  var n = Math.floor(a.sampleRate * 1.1);
+  var buf = a.createBuffer(1, n, a.sampleRate);
+  var d = buf.getChannelData(0);
+  for (var i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  var s = a.createBufferSource(); s.buffer = buf;
+  var bp = a.createBiquadFilter(); bp.type = 'bandpass';
+  bp.frequency.setValueAtTime(420, t);
+  bp.frequency.exponentialRampToValueAtTime(1300, t + 0.45);
+  bp.frequency.exponentialRampToValueAtTime(360, t + 1.0);
+  bp.Q.value = 0.8;
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.15, t + 0.25);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 1.05);
+  s.connect(bp); bp.connect(g); g.connect(master);
+  s.start(t); s.stop(t + 1.1);
 }
 
 /* ---------- 生きもの ---------- */
@@ -303,7 +309,7 @@ function plant(x, y){
   }
 
   if (bloomed % 12 === 0){
-    sCheer();
+    sWind();
     for (var i = 0; i < butters.length; i++){
       butters[i].tx = x + (Math.random() - 0.5) * W * 0.4;
       butters[i].ty = HZ + Math.random() * (H - HZ) * 0.8;
@@ -537,25 +543,82 @@ function drawButterfly(b, t){
 }
 
 /* ---------- ループ ---------- */
+/* ---------- ひと工夫。こちらが触らなくても、朝から夜へゆっくり巡る ----------
+   ひと回り78秒。夜でも花が見えなくならないところで止める */
+var CYCLE = 78;
+var TONES = [
+  { at: 0.00, sky: [[243,201,166], [240,220,196], [248,234,208]], dark: 0.18 },  /* 朝 */
+  { at: 0.26, sky: [[169,216,232], [207,231,226], [246,236,212]], dark: 0.00 },  /* 昼 */
+  { at: 0.58, sky: [[232,168,116], [240,198,154], [246,217,176]], dark: 0.10 },  /* 夕 */
+  { at: 0.78, sky: [[ 26, 38, 64], [ 38, 53, 82], [ 64, 76,104]], dark: 0.46 },  /* 夜 */
+  { at: 1.00, sky: [[243,201,166], [240,220,196], [248,234,208]], dark: 0.18 }
+];
+var fireflies = [];
+
+function mix(a, b, u){ return Math.round(a + (b - a) * u); }
+
+function tone(p){
+  var i = 0;
+  while (i < TONES.length - 2 && p > TONES[i + 1].at) i++;
+  var a = TONES[i], b = TONES[i + 1];
+  var u = (p - a.at) / Math.max(0.0001, b.at - a.at);
+  u = u * u * (3 - 2 * u);                 /* 変わり目をなめらかにする */
+  var s = [];
+  for (var k = 0; k < 3; k++){
+    s.push('rgb(' + mix(a.sky[k][0], b.sky[k][0], u) + ',' +
+                    mix(a.sky[k][1], b.sky[k][1], u) + ',' +
+                    mix(a.sky[k][2], b.sky[k][2], u) + ')');
+  }
+  return { sky: s, dark: a.dark + (b.dark - a.dark) * u };
+}
+
 var last = 0, T = 0;
 function frame(now){
   var dt = last ? Math.min(0.05, (now - last) / 1000) : 0.016;
   last = now; T += dt;
 
+  var phase = (T % CYCLE) / CYCLE;
+  var tn = tone(phase);
+
   // 空
-  ctx.fillStyle = SKY;
+  var sky2 = ctx.createLinearGradient(0, 0, 0, HZ);
+  sky2.addColorStop(0, tn.sky[0]);
+  sky2.addColorStop(0.55, tn.sky[1]);
+  sky2.addColorStop(1, tn.sky[2]);
+  ctx.fillStyle = sky2;
   ctx.fillRect(0, 0, W, HZ + 1);
 
-  // おひさま
-  var sx = W * 0.82, sy = HZ * 0.3, sr = unit() * 0.062;
+  // おひさまとおつきさま。空をゆっくり渡る
+  var isDay = phase < 0.70;
+  var q = isDay ? (phase / 0.70) : ((phase - 0.70) / 0.30);
+  var sx = W * (0.10 + 0.80 * q);
+  var sy = HZ * (0.88 - 0.66 * Math.sin(Math.PI * q));
+  var sr = unit() * (isDay ? 0.062 : 0.046);
+  var core = isDay ? '255,246,214' : '246,244,228';
+  var halo = isDay ? '255,232,168' : '214,226,238';
   var sg = ctx.createRadialGradient(sx, sy, sr * 0.2, sx, sy, sr * 2.4);
-  sg.addColorStop(0,   'rgba(255,240,190,.95)');
-  sg.addColorStop(0.4, 'rgba(255,232,168,.45)');
-  sg.addColorStop(1,   'rgba(255,232,168,0)');
+  sg.addColorStop(0,   'rgba(' + halo + ',.85)');
+  sg.addColorStop(0.4, 'rgba(' + halo + ',.40)');
+  sg.addColorStop(1,   'rgba(' + halo + ',0)');
   ctx.fillStyle = sg;
   ctx.beginPath(); ctx.arc(sx, sy, sr * 2.4, 0, 6.283); ctx.fill();
-  ctx.fillStyle = 'rgba(255,246,214,.98)';
+  ctx.fillStyle = 'rgba(' + core + ',.98)';
   ctx.beginPath(); ctx.arc(sx, sy, sr * (1 + Math.sin(T * 0.8) * 0.02), 0, 6.283); ctx.fill();
+  if (!isDay){
+    /* まるいお月さま。欠けさせると、小さい画面では黒い染みに見える */
+    ctx.fillStyle = 'rgba(228,232,214,.55)';
+    ctx.beginPath(); ctx.arc(sx - sr * 0.30, sy + sr * 0.26, sr * 0.20, 0, 6.283); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx + sr * 0.34, sy - sr * 0.20, sr * 0.14, 0, 6.283); ctx.fill();
+  }
+
+  /* 夜のあいだ、ほたるが草の上をただよう */
+  if (tn.dark > 0.30 && fireflies.length < 16 && Math.random() < 0.10){
+    fireflies.push({
+      x: Math.random() * W, y: HZ + Math.random() * (H - HZ) * 0.8,
+      ph: Math.random() * 6.283, sp: 0.5 + Math.random() * 0.8,
+      dx: (Math.random() - 0.5) * 14, dy: (Math.random() - 0.5) * 10, life: 1
+    });
+  }
 
   for (var i = 0; i < clouds.length; i++){
     var cl = clouds[i];
@@ -674,6 +737,34 @@ function frame(now){
     ctx.fill();
   }
   if (puffs.length > 60) puffs.splice(0, puffs.length - 60);
+
+  /* 夜の色を上からかける。空はもう夜の色なので薄く、草の上には濃くかける。
+     花が見えなくなる手前で止める */
+  if (tn.dark > 0.002){
+    ctx.fillStyle = 'rgba(30,44,72,' + (tn.dark * 0.5) + ')';
+    ctx.fillRect(0, 0, W, HZ);
+    ctx.fillStyle = 'rgba(30,44,72,' + tn.dark + ')';
+    ctx.fillRect(0, HZ, W, H - HZ);
+  }
+
+  /* ほたる。夜のあいだだけ、草の上をゆっくり点滅しながら流れる */
+  for (var i = fireflies.length - 1; i >= 0; i--){
+    var ff = fireflies[i];
+    ff.ph += dt * ff.sp * 2.4;
+    ff.x += ff.dx * dt; ff.y += ff.dy * dt;
+    if (tn.dark < 0.22) ff.life -= dt * 0.5;
+    if (ff.life <= 0 || ff.x < -20 || ff.x > W + 20){ fireflies.splice(i, 1); continue; }
+    var gl = (0.35 + 0.65 * Math.max(0, Math.sin(ff.ph))) * ff.life *
+             Math.max(0, Math.min(1, (tn.dark - 0.16) / 0.24));
+    if (gl <= 0.01) continue;
+    var fr = unit() * 0.012;
+    var fg = ctx.createRadialGradient(ff.x, ff.y, 0.5, ff.x, ff.y, fr * 3.4);
+    fg.addColorStop(0,   'rgba(232,255,178,' + (gl * 0.95) + ')');
+    fg.addColorStop(0.4, 'rgba(206,240,138,' + (gl * 0.35) + ')');
+    fg.addColorStop(1,   'rgba(206,240,138,0)');
+    ctx.fillStyle = fg;
+    ctx.beginPath(); ctx.arc(ff.x, ff.y, fr * 3.4, 0, 6.283); ctx.fill();
+  }
 
   requestAnimationFrame(frame);
 }
