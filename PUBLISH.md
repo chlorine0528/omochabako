@@ -65,6 +65,9 @@ curl -sS https://raw.githubusercontent.com/chlorine0528/omochabako/main/NEXT.md
   検証スクリプトは「音が鳴ったか」で数えている。押して何も鳴らない場所があると落ちる
 - **「もどる」ボタンは `games/shabondama/index.html` のものをそのまま流用する。**
   700msの長押しで発火する、あのHTMLとCSSとJSの3点セットを丸ごと持ってくる
+- **ひと工夫を1つ入れる。** `DESIGN.md` の「ひと工夫を必ず1つ入れる」から型を1つ選び、
+  `games.json` の `twist` にその型名を書く。過去に使った型は `games.json` を見て避ける。
+  基本の手触りだけで終わらせない。動詞を1つ実装した時点では、まだ半分
 
 ### 4. 実測する
 
