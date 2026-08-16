@@ -72,9 +72,14 @@ curl -sS https://raw.githubusercontent.com/chlorine0528/omochabako/main/NEXT.md
 
 ```
 node tools/verify_game.js <slug>
+node tools/verify_touch.js <slug>
 ```
 
-縦(390x844)と横(844x390)の両方で20項目を数える。1つでも落ちたら直してから次へ進む。
+`verify_game.js` は縦(390x844)と横(844x390)の両方で20項目を数える。
+`verify_touch.js` は、同じ場所を接触面1pxと90pxで1回ずつ押して、反応が変わらないことを見る。
+ヘッドレスのブラウザは指の接触面をいつも1pxで返すので、`PointerEvent` の `width` や
+`height` で操作を分岐させると、20項目を通ったまま実機だけで壊れる。
+どちらも、1つでも落ちたら直してから次へ進む。
 Playwrightはコンテナに入っている。`require('playwright')` が見つからないときだけ
 `npm install -g playwright` を回す。
 
