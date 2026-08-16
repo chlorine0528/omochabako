@@ -335,15 +335,27 @@ var lastInput = 0, autoAt = 0;
 
 function now(){ return (window.performance && performance.now) ? performance.now() : 0; }
 
-function tap(x, y, wide){
+/* 手のひらの判定。指の接触面の大きさ（PointerEvent の width と height）は
+   端末ごとに大きく違い、ふつうの指1本でも50pxを超えることがある。そこで判定すると
+   1回のタップで全部が一斉に上がってしまうので、降りた点の数だけを見る */
+var slam = [], slamHit = [];
+
+function tap(x, y){
   audio();
-  lastInput = now();
-  if (wide){
-    for (var j = 0; j < TUBES.length; j++) launch(j);
-    return;
-  }
+  var t0 = now();
+  lastInput = t0;
   if (y >= zoneTop){
-    launch(nearestTube(x));
+    var idx = nearestTube(x);
+    launch(idx);                 /* どの指も必ず1発上げる。無音の指を作らない */
+    while (slam.length && t0 - slam[0] > 160) slam.shift();
+    if (!slam.length) slamHit = [];
+    slam.push(t0);
+    if (slamHit.indexOf(idx) < 0) slamHit.push(idx);
+    /* 短いあいだに3点以上が地面に降りたら手のひら。残りの筒もまとめて上げる */
+    if (slam.length >= 3){
+      for (var j = 0; j < TUBES.length; j++) if (slamHit.indexOf(j) < 0) launch(j);
+      slam.length = 0; slamHit = [];
+    }
   } else {
     /* 空を押しても必ず何かが起きる。線香花火がひとつ灯る */
     sparklers.push({ x: x, y: y, life: 1, em: 0 });
@@ -366,8 +378,7 @@ function tap(x, y, wide){
 c.addEventListener('pointerdown', function(e){
   e.preventDefault();
   var r = c.getBoundingClientRect();
-  var wide = (e.width && e.width > 46) || (e.height && e.height > 46);
-  tap(e.clientX - r.left, e.clientY - r.top, wide);
+  tap(e.clientX - r.left, e.clientY - r.top);
 }, { passive: false });
 c.addEventListener('contextmenu', function(e){ e.preventDefault(); });
 
