@@ -117,6 +117,11 @@ python3 tools/pack_payload.py /tmp/payload.txt games/<slug>/index.html games.jso
 `NEXT.md` を消化したなら、引数の最後に `NEXT.md` も足す。
 文字数と照合用のshaが出るので、shaは控えておく。
 
+**出た文字数が1万2000字を超えたら、そのまま送っても届かない。**
+1回のツール呼び出しに書き出せる量に上限があり、途中で切れてJSONとして壊れる。
+新しいゲームを1本足すだけなら1万字前後に収まるが、既存のゲームを直すときは
+「差分だけを送る」に進む。
+
 次に、その文字列を切り分ける。**1つが2000字を超えないように切ること。**
 長い1本のまま渡すと、途中の文字が化けて必ずsha照合で落ちる。
 （1万字を超えると、ほぼ毎回落ちる。8000字でも落ちたことがある。）
@@ -197,15 +202,54 @@ return { ok: true, before: head.slice(0,7), after: rf.object.sha.slice(0,7) };
 `build.py` を回したあとなら、ゲーム本体だけを先に送り、`games.json` と
 `index.html` をあとから送っても、途中の状態が数分見えるだけで問題は起きない。
 
+#### 差分だけを送る
+
+既存のゲームを直したときは、ファイル全体ではなく差分を送る。
+ゲーム1本は3万字を超えることがあり、圧縮しても1万5000字近くになって、
+1回のツール呼び出しに書き切れない。直した行だけなら2000字前後で収まる。
+
+まず、いま公開されている中身を落として、それとの差分を作る。
+
+```
+curl -sS -o /tmp/pub.html https://raw.githubusercontent.com/chlorine0528/omochabako/main/games/<slug>/index.html
+python3 tools/pack_delta.py /tmp/delta.txt games/<slug>/index.html /tmp/pub.html
+python3 tools/split_payload.py /tmp/delta.txt 2
+```
+
+`pack_delta.py` は行番号で指定した置き換えの列を作り、適用前と適用後のsha256を添える。
+ローカルで一度当て直して、元のファイルに戻ることを確かめてから書き出すので、
+ここを通った時点で中身は正しい。
+
+Zapier側のJSは上のものと2か所だけ違う。`inputData.p1` から `p4` までを見ることと、
+blobを作る前に次を挟むこと。
+
+```js
+const cur = await api(R + '/contents/' + d.path + '?ref=main');
+const txt = Buffer.from(cur.content, 'base64').toString('utf8');
+if (h(txt) !== d.base) return { error: 'base mismatch', got: h(txt).slice(0,16), want: d.base.slice(0,16) };
+const L = txt.split('\n');
+for (let k = d.ops.length - 1; k >= 0; k--) { const o = d.ops[k]; L.splice(o[0], o[1] - o[0], ...o[2]); }
+const out = L.join('\n');
+if (h(out) !== d.out) return { error: 'result mismatch', got: h(out).slice(0,16), want: d.out.slice(0,16) };
+```
+
+`base mismatch` は、手元の `/tmp/pub.html` が古いということ。落とし直してやり直す。
+`result mismatch` は当てた結果が食い違っているということ。どちらもリポジトリには何も入らない。
+
 ### 7. 公開を確かめる
 
-1分ほど待ってから `raw.githubusercontent.com` を叩き、`main` に載ったことを確かめる。
+Zapierが返した `after` のコミットshaで `raw.githubusercontent.com` を叩き、
+手元のファイルと1バイトも違わないことを確かめる。
 
 ```
-curl -sS -o /dev/null -w '%{http_code}\n' \
-  https://raw.githubusercontent.com/chlorine0528/omochabako/main/games/<slug>/index.html
-curl -sS https://raw.githubusercontent.com/chlorine0528/omochabako/main/games.json
+curl -sS -o /tmp/live.html \
+  https://raw.githubusercontent.com/chlorine0528/omochabako/<after>/games/<slug>/index.html
+diff -q /tmp/live.html games/<slug>/index.html && echo IDENTICAL
 ```
+
+**`main` のURLで確かめない。** rawの `main` はCDNに数分残るので、
+公開できていても古い中身が返る。ここで「差分あり」を見て送り直すと、同じ変更を二重に入れる。
+コミットshaを指すURLはキャッシュされないので、こちらだけを見る。
 
 `github.io` はここから見えないので、Pagesのビルドまでは確認できない。
 `main` に載っていれば数分で公開される。
