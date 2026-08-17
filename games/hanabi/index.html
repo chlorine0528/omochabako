@@ -402,8 +402,10 @@ function allow(max){
 }
 
 /* ---------- たま ---------- */
-var shells = [], sparks = [], sparklers = [], booms = [], flash = 0;
+var shells = [], sparks = [], sparklers = [], booms = [], veils = [], flash = 0;
 var MAXSP = 340, GRAV = 2800;
+/* かたちの花火を見せているあいだ、まわりの花火をどれだけ引っこめるか（0から1） */
+var hush = 0, figUp = 0;
 
 function nearestTube(x){
   var best = 0, bd = 1e9;
@@ -438,13 +440,16 @@ function launch(idx){
   mouthSparks(t);            /* 1段目。押した指のところで、すぐに何かが起きる */
   sLaunch();
 
-  /* 4回に1回くらい、かたちの花火にする。色は筒のまま変えない */
+  /* 4回に1回くらい、かたちの花火にする。色は筒のまま変えない。
+     ただし、かたちが上がっている最中と開いた直後は選ばない。
+     2つ重なると、どちらも何の絵だか分からなくなる */
   var kind = t.kind, shape = -1;
-  if (Math.random() < 0.26){
+  if (Math.random() < 0.26 && !figUp && hush < 0.25){
     kind = 3;
     do { shape = Math.floor(Math.random() * SHAPES.length); }
     while (shape === lastShape);
     lastShape = shape;
+    figUp = 1;
   }
 
   /* かたちは高いところで開くほうが読める */
@@ -469,17 +474,19 @@ function figure(s){
   var room = MAXSP - sparks.length;
   var step = room > pts.length + 30 ? 1 : 2;   /* 混み合っていたら1つおきに間引く */
   /* ブレーキ0.16のとき、広がりきる半径は初速のおよそ0.55倍。画面の3分の1に収める */
-  var SP = Math.min(W, H) * 0.62;
+  var SP = Math.min(W, H) * 0.70;
   for (var j = 0; j < pts.length; j += step){
     var p = pts[j], acc = p[2] === 1;
     sparks.push({
       x: s.x, y: s.y, px: s.x, py: s.y,
       vx: p[0] * SP + s.vx * 0.12,
       vy: p[1] * SP + s.vy * 0.12,
-      g: 70, dg: 0.16, dr: 0.95, w: acc ? 4.6 : 4.2, tf: 0.045,
+      g: 70, dg: 0.16, dr: 0.80, w: acc ? 6.2 : 5.6, tf: 0.045, fig: 1,
       hue: acc ? 45 : s.hue, sat: acc ? 96 : s.sat, life: 1
     });
   }
+  /* 絵の後ろに暗いもやを敷く。まわりの花火の光と混ざらなくなる */
+  veils.push({ x: s.x, y: s.y, r: Math.min(W, H) * 0.52, life: 1 });
 }
 
 function ring(s, n, spd, spread, hue, sat, grav, drag, wid){
@@ -499,12 +506,14 @@ function burst(s){
   sPop(s.f); sCrackle();
   flash = Math.min(0.5, flash + 0.16);
   /* かたちのときは、まんなかの光を小さくする。形が隠れるため */
-  booms.push({ x: s.x, y: s.y, hue: s.hue, sat: s.sat, life: 1,
+  booms.push({ x: s.x, y: s.y, hue: s.hue, sat: s.sat, life: 1, fig: s.kind === 3 ? 1 : 0,
     r: Math.max(46, Math.min(W, H) * 0.14) * (s.kind === 3 ? 0.5 : 1) });
   var room = MAXSP - sparks.length;
   var scale = room > 190 ? 1 : (room > 100 ? 0.62 : 0.36);
 
   if (s.kind === 3){          /* かたち */
+    figUp = 0;
+    hush = 1;                 /* まわりの花火をしばらく引っこめて、絵だけを見せる */
     figure(s); sChime(s.f);
     for (var q = 0; q < stars.length; q++){
       var d0 = Math.abs(stars[q].x - s.x) + Math.abs(stars[q].y - s.y);
@@ -668,6 +677,9 @@ function frame(tnow){
   last = tnow;
   if (!lastInput) lastInput = tnow;
 
+  /* 絵を見せている時間。約1.6秒かけてまわりの花火が戻ってくる */
+  if (hush > 0) hush = Math.max(0, hush - dt * 0.62);
+
   var idle = (tnow - lastInput) / 1000;
   idleWave += (( idle > 3 ? 1 : 0 ) - idleWave) * Math.min(1, dt * 2.2);
   /* 3秒さわらないと、筒が自分から上げてさそう */
@@ -690,6 +702,20 @@ function frame(tnow){
     ctx.arc(st.x, st.y, st.r * (1 + st.glow * 0.9), 0, 6.283);
     ctx.fillStyle = 'rgba(255,247,226,' + Math.min(1, a2) + ')';
     ctx.fill();
+  }
+
+  /* 絵の後ろの暗いもや。火の粉より先に敷く */
+  for (var jv = veils.length - 1; jv >= 0; jv--){
+    var vl = veils[jv];
+    vl.life -= dt * 0.62;
+    if (vl.life <= 0){ veils.splice(jv, 1); continue; }
+    var va = Math.min(1, vl.life * 1.7) * 0.62;
+    var vg = ctx.createRadialGradient(vl.x, vl.y, 1, vl.x, vl.y, vl.r);
+    vg.addColorStop(0,    'rgba(9,14,28,' + va + ')');
+    vg.addColorStop(0.55, 'rgba(9,14,28,' + (va * 0.62) + ')');
+    vg.addColorStop(1,    'rgba(9,14,28,0)');
+    ctx.fillStyle = vg;
+    ctx.beginPath(); ctx.arc(vl.x, vl.y, vl.r, 0, 6.283); ctx.fill();
   }
 
   /* 玉。尾を引いて昇る */
@@ -743,7 +769,8 @@ function frame(tnow){
     if (bm.life <= 0){ booms.splice(jb, 1); continue; }
     var br = bm.r * (1.55 - bm.life * 1.05);
     var bg = ctx.createRadialGradient(bm.x, bm.y, 1, bm.x, bm.y, br);
-    var bl = bm.life * bm.life;
+    /* ふつうの花火のまんなかの光も、絵が出ているあいだは引っこむ */
+    var bl = bm.life * bm.life * (bm.fig ? 1 : (1 - hush * 0.78));
     bg.addColorStop(0,    'hsla(' + bm.hue + ',92%,86%,' + (bl * 0.95) + ')');
     bg.addColorStop(0.32, 'hsla(' + bm.hue + ',' + bm.sat + '%,68%,' + (bl * 0.44) + ')');
     bg.addColorStop(1,    'hsla(' + bm.hue + ',' + bm.sat + '%,60%,0)');
@@ -764,6 +791,9 @@ function frame(tnow){
     if (p.y > groundY + 30){ sparks.splice(j4, 1); continue; }
     var lf = Math.max(0, Math.min(1, p.life));
     var wd = p.w * (0.34 + lf * 0.66);
+    /* かたちの粉は太く明るく。ふつうの粉は、絵が出ているあいだ引っこむ */
+    var duck = p.fig ? 1 : (1 - hush * 0.78);
+    if (duck < 0.03){ continue; }
     /* 尾。速いほど長く伸び、遅くなると点に落ちつく。かたちの粉は短くして輪郭を出す */
     var tf = p.tf || 0.115;
     p.px = p.x - p.vx * tf; p.py = p.y - p.vy * tf;
@@ -771,14 +801,17 @@ function frame(tnow){
     if (lf > 0.24){
       ctx.beginPath();
       ctx.moveTo(p.px, p.py); ctx.lineTo(p.x, p.y);
-      ctx.strokeStyle = 'hsla(' + p.hue + ',' + p.sat + '%,58%,' + (lf * 0.16) + ')';
-      ctx.lineWidth = wd * 2.6; ctx.stroke();
+      ctx.strokeStyle = 'hsla(' + p.hue + ',' + p.sat + '%,' +
+        (p.fig ? 66 : 58) + '%,' + (lf * (p.fig ? 0.30 : 0.16) * duck) + ')';
+      ctx.lineWidth = wd * (p.fig ? 2.9 : 2.6); ctx.stroke();
     }
-    /* 芯。開いた直後だけ白く、すぐに色に落ちつく */
-    var li = lf > 0.93 ? 92 : (47 + lf * 19);
+    /* 芯。かたちの粉は白い時間を長くとって、輪郭を線として見せる */
+    var li = p.fig ? (lf > 0.62 ? 95 : (56 + lf * 34))
+                   : (lf > 0.93 ? 92 : (47 + lf * 19));
     ctx.beginPath();
     ctx.moveTo(p.px, p.py); ctx.lineTo(p.x, p.y);
-    ctx.strokeStyle = 'hsla(' + p.hue + ',' + p.sat + '%,' + li + '%,' + (0.26 + lf * 0.70) + ')';
+    ctx.strokeStyle = 'hsla(' + p.hue + ',' + p.sat + '%,' + li + '%,' +
+      ((0.26 + lf * 0.70) * duck) + ')';
     ctx.lineWidth = wd; ctx.stroke();
   }
   ctx.globalCompositeOperation = 'source-over';
@@ -803,7 +836,11 @@ function frame(tnow){
   }
 
   if (sparks.length > MAXSP) sparks.splice(0, sparks.length - MAXSP);
-  if (shells.length > 18) shells.splice(0, shells.length - 18);
+  if (shells.length > 18){
+    /* あふれて捨てられた玉のなかに、かたちの玉があったら札を戻す */
+    for (var jx = 0; jx < shells.length - 18; jx++) if (shells[jx].kind === 3) figUp = 0;
+    shells.splice(0, shells.length - 18);
+  }
 
   requestAnimationFrame(frame);
 }
