@@ -252,6 +252,10 @@ var BLK = [
   ['#e2915d', '#f2b58c', '#b96a3a']
 ];
 
+/* 色ごとに決まったマーク。0まる 1しかく 2さんかく 3ひしがた 4じゅうじ 5ほし。
+   色とマークがいつも同じ組なので、形の側からも同じ色だと分かる */
+var MARK = [0, 5, 2, 1, 3, 4];
+
 var RGB = [];
 for (var q0 = 0; q0 < BLK.length; q0++){
   RGB.push(parseInt(BLK[q0][0].slice(1, 3), 16) + ',' +
@@ -307,7 +311,7 @@ function newBlock(near){
     c: c,
     dx: (Math.random() - 0.5) * BW * 0.30,
     rot: (Math.random() - 0.5) * 0.13,
-    face: Math.random() < 0.42 ? Math.floor(Math.random() * 3) : -1,
+    face: MARK[c],
     wob: 0, wph: Math.random() * 6.283
   };
 }
@@ -636,18 +640,42 @@ function paintBlock(b, cx, cy, rot, alpha, scale, glow){
   rr(-w / 2 + w * 0.06, -h / 2 + h * 0.08, w * 0.88, h * 0.3, r * 0.7); ctx.fill();
   ctx.fillStyle = p[2];
   rr(-w / 2 + w * 0.06, h / 2 - h * 0.22, w * 0.88, h * 0.12, r * 0.5); ctx.fill();
-  if (b.face === 0){
-    ctx.fillStyle = 'rgba(255,252,240,.85)';
-    ctx.beginPath(); ctx.arc(0, h * 0.06, Math.min(w, h) * 0.2, 0, 6.283); ctx.fill();
-  } else if (b.face === 1){
-    ctx.fillStyle = 'rgba(255,252,240,.85)';
-    rr(-w * 0.16, h * 0.06 - w * 0.16, w * 0.32, w * 0.32, w * 0.07); ctx.fill();
-  } else if (b.face === 2){
-    ctx.fillStyle = 'rgba(255,252,240,.85)';
-    var s = Math.min(w, h) * 0.24;
-    ctx.beginPath();
-    ctx.moveTo(0, h * 0.06 - s); ctx.lineTo(s * 0.92, h * 0.06 + s * 0.6);
-    ctx.lineTo(-s * 0.92, h * 0.06 + s * 0.6); ctx.closePath(); ctx.fill();
+  var mk = b.face, s = Math.min(w, h) * 0.215, my = h * 0.06, q, an, rad;
+  if (mk >= 0){
+    ctx.fillStyle = 'rgba(255,252,240,.88)';
+    if (mk === 0){                                   /* まる */
+      ctx.beginPath(); ctx.arc(0, my, s * 0.94, 0, 6.283); ctx.fill();
+    } else if (mk === 1){                            /* しかく */
+      rr(-s * 0.86, my - s * 0.86, s * 1.72, s * 1.72, s * 0.3); ctx.fill();
+    } else if (mk === 2){                            /* さんかく */
+      ctx.beginPath();
+      ctx.moveTo(0, my - s * 1.05);
+      ctx.lineTo(s * 1.0, my + s * 0.72);
+      ctx.lineTo(-s * 1.0, my + s * 0.72);
+      ctx.closePath(); ctx.fill();
+    } else if (mk === 3){                            /* ひしがた */
+      ctx.beginPath();
+      ctx.moveTo(0, my - s * 1.18); ctx.lineTo(s * 1.02, my);
+      ctx.lineTo(0, my + s * 1.18); ctx.lineTo(-s * 1.02, my);
+      ctx.closePath(); ctx.fill();
+    } else if (mk === 4){                            /* じゅうじ。ひと筆で描く */
+      var a2 = s * 0.40, b2 = s * 1.06;
+      ctx.beginPath();
+      ctx.moveTo(-a2, my - b2); ctx.lineTo(a2, my - b2); ctx.lineTo(a2, my - a2);
+      ctx.lineTo(b2, my - a2); ctx.lineTo(b2, my + a2); ctx.lineTo(a2, my + a2);
+      ctx.lineTo(a2, my + b2); ctx.lineTo(-a2, my + b2); ctx.lineTo(-a2, my + a2);
+      ctx.lineTo(-b2, my + a2); ctx.lineTo(-b2, my - a2); ctx.lineTo(-a2, my - a2);
+      ctx.closePath(); ctx.fill();
+    } else {                                         /* ほし */
+      ctx.beginPath();
+      for (q = 0; q < 10; q++){
+        rad = (q % 2) ? s * 0.52 : s * 1.2;
+        an = -Math.PI / 2 + q * Math.PI / 5;
+        if (q) ctx.lineTo(Math.cos(an) * rad, my + Math.sin(an) * rad);
+        else ctx.moveTo(Math.cos(an) * rad, my + Math.sin(an) * rad);
+      }
+      ctx.closePath(); ctx.fill();
+    }
   }
   if (glow){
     ctx.globalAlpha = Math.min(1, glow);
