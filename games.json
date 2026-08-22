@@ -8,6 +8,14 @@
   "photo": "papa.jpg",
   "games": [
     {
+      "slug": "tsumiki",
+      "title": "つみき",
+      "date": "2026-08-23",
+      "bg": "#efe0c4",
+      "icon": "<svg viewBox=\"0 0 120 120\" aria-hidden=\"true\"><rect x=\"0\" y=\"100\" width=\"120\" height=\"20\" fill=\"#e0be8e\"/><rect x=\"0\" y=\"100\" width=\"120\" height=\"3\" fill=\"#f0d8ab\"/><g fill=\"#fbf8f0\"><ellipse cx=\"62\" cy=\"26\" rx=\"26\" ry=\"13\"/><ellipse cx=\"42\" cy=\"31\" rx=\"16\" ry=\"9\"/><ellipse cx=\"82\" cy=\"30\" rx=\"17\" ry=\"10\"/><ellipse cx=\"66\" cy=\"18\" rx=\"15\" ry=\"10\"/></g><g><rect x=\"8\" y=\"74\" width=\"40\" height=\"25\" rx=\"7\" fill=\"#dd6f5c\"/><rect x=\"11\" y=\"76\" width=\"34\" height=\"8\" rx=\"4\" fill=\"#ef9d8c\"/><rect x=\"11\" y=\"92\" width=\"34\" height=\"4\" rx=\"2\" fill=\"#b8533f\"/><rect x=\"52\" y=\"74\" width=\"40\" height=\"25\" rx=\"7\" fill=\"#57a8c8\"/><rect x=\"55\" y=\"76\" width=\"34\" height=\"8\" rx=\"4\" fill=\"#8fcde0\"/><rect x=\"55\" y=\"92\" width=\"34\" height=\"4\" rx=\"2\" fill=\"#3a809d\"/><rect x=\"18\" y=\"47\" width=\"40\" height=\"25\" rx=\"7\" fill=\"#eeb44c\"/><rect x=\"21\" y=\"49\" width=\"34\" height=\"8\" rx=\"4\" fill=\"#f9d287\"/><rect x=\"21\" y=\"65\" width=\"34\" height=\"4\" rx=\"2\" fill=\"#c88c2c\"/><circle cx=\"38\" cy=\"61\" r=\"6\" fill=\"#fffbf0\"/><rect x=\"64\" y=\"47\" width=\"40\" height=\"25\" rx=\"7\" fill=\"#87bd5c\"/><rect x=\"67\" y=\"49\" width=\"34\" height=\"8\" rx=\"4\" fill=\"#b0d78d\"/><rect x=\"67\" y=\"65\" width=\"34\" height=\"4\" rx=\"2\" fill=\"#5f9639\"/><rect x=\"40\" y=\"20\" width=\"40\" height=\"25\" rx=\"7\" fill=\"#c187bd\"/><rect x=\"43\" y=\"22\" width=\"34\" height=\"8\" rx=\"4\" fill=\"#dcafd7\"/><rect x=\"43\" y=\"38\" width=\"34\" height=\"4\" rx=\"2\" fill=\"#96609a\"/><polygon points=\"60,27 66,38 54,38\" fill=\"#fffbf0\"/></g></svg>",
+      "twist": "ためると変わる"
+    },
+    {
       "slug": "hanabi",
       "title": "はなび",
       "date": "2026-08-16",
