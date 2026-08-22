@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#efe0c4">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>つみき</title>
+<style>
+  :root{ color-scheme: light; }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    width:100%; height:100%; overflow:hidden;
+    background:#efe0c4;
+    overscroll-behavior:none; touch-action:none;
+    -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent;
+    font-family: system-ui, -apple-system, "Segoe UI",
+      "Hiragino Kaku Gothic ProN", "Hiragino Sans",
+      "BIZ UDPGothic", "Yu Gothic Medium", "Yu Gothic", YuGothic,
+      Meiryo, "Noto Sans JP", sans-serif;
+  }
+  #c{ position:fixed; inset:0; width:100%; height:100%; display:block; }
+  #home{
+    position:fixed; top:max(10px, env(safe-area-inset-top)); left:max(10px, env(safe-area-inset-left));
+    width:40px; height:40px; padding:0; border:0; border-radius:50%;
+    background:rgba(255,255,255,.42); backdrop-filter:blur(2px);
+    display:grid; place-items:center; cursor:pointer; z-index:5;
+    touch-action:none; -webkit-tap-highlight-color:transparent;
+  }
+  #home svg{ width:34px; height:34px; display:block; }
+  #home .trk{ fill:none; stroke:rgba(74,92,96,.22); stroke-width:2.5; }
+  #home .rng{
+    fill:none; stroke:#4a5c60; stroke-width:2.5; stroke-linecap:round;
+    stroke-dasharray:94.2; stroke-dashoffset:94.2;
+    transform:rotate(-90deg); transform-origin:50% 50%;
+    transition:stroke-dashoffset .04s linear;
+  }
+  #home.hold .rng{ stroke-dashoffset:0; transition:stroke-dashoffset .7s linear; }
+  #home .ico{ fill:#4a5c60; opacity:.72; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="home" aria-label="おもちゃばこに もどる">
+  <svg viewBox="0 0 36 36" aria-hidden="true">
+    <circle class="trk" cx="18" cy="18" r="15"/>
+    <circle class="rng" cx="18" cy="18" r="15"/>
+    <path class="ico" d="M18 9.4 10.2 16v9.1c0 .6.5 1.1 1.1 1.1h4.1v-5.3h5.2v5.3h4.1c.6 0 1.1-.5 1.1-1.1V16z"/>
+  </svg>
+</button>
+<script>
+(function(){
+'use strict';
+
+/* ---------- 画面 ---------- */
+var c = document.getElementById('c'), ctx = c.getContext('2d');
+var W = 0, H = 0, DPR = 1;
+var BW = 60, BH = 38, FLOOR = 0, ORIGIN = 0, NCOL = 6, MAXST = 6;
+
+function layout(){
+  var u = Math.min(W, H);
+  BW = Math.max(52, Math.min(96, u * 0.155));
+  BH = BW * 0.62;
+  FLOOR = H - Math.max(54, H * 0.10);
+  NCOL = Math.max(3, Math.floor(W / BW));
+  BW = W / NCOL;                       /* 端に余りを作らない */
+  BH = Math.min(BW * 0.62, (FLOOR - H * 0.16) / 6);
+  ORIGIN = 0;
+  MAXST = Math.max(3, Math.min(7, Math.floor((FLOOR - H * 0.14) / BH)));
+}
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  var r = c.getBoundingClientRect();
+  W = Math.max(1, r.width); H = Math.max(1, r.height);
+  c.width = Math.round(W * DPR); c.height = Math.round(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  var old = cols, oldN = NCOL;
+  layout();
+  if (old){
+    var next = [], i;
+    for (i = 0; i < NCOL; i++) next.push([]);
+    for (i = 0; i < oldN; i++){
+      var to = Math.min(NCOL - 1, Math.round(i * (NCOL - 1) / Math.max(1, oldN - 1)));
+      for (var j = 0; j < old[i].length; j++){
+        if (next[to].length < MAXST) next[to].push(old[i][j]);
+      }
+    }
+    cols = next;
+  }
+  skyCache = null;
+}
+
+/* ---------- 音 ---------- */
+var ac = null, master = null, noiseBuf = null, voices = 0;
+var WOOD = [174.61, 196.00, 220.00, 261.63, 293.66, 329.63, 392.00, 440.00];
+
+function audio(){
+  if (ac){ if (ac.state === 'suspended') ac.resume(); return ac; }
+  var AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  try { ac = new AC(); } catch(e){ return null; }
+  var comp = ac.createDynamicsCompressor();
+  comp.threshold.value = -17; comp.knee.value = 24; comp.ratio.value = 10;
+  comp.attack.value = 0.003; comp.release.value = 0.24;
+  master = ac.createGain(); master.gain.value = 0.5;
+  master.connect(comp); comp.connect(ac.destination);
+  var n = Math.floor(ac.sampleRate * 0.14);
+  noiseBuf = ac.createBuffer(1, n, ac.sampleRate);
+  var d = noiseBuf.getChannelData(0);
+  for (var i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 3.0);
+  return ac;
+}
+
+function free(t){ voices++; setTimeout(function(){ voices--; }, t); }
+
+/* 指を離した瞬間ではなく、触れた瞬間に鳴る。積み木を手から放す軽い音 */
+function sHold(v){
+  var a = audio(); if (!a) return;
+  var t = a.currentTime, f = 520 + Math.random() * 90;
+  var o = a.createOscillator(); o.type = 'triangle';
+  o.frequency.setValueAtTime(f, t);
+  o.frequency.exponentialRampToValueAtTime(f * 0.72, t + 0.09);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.14 * (v === undefined ? 1 : v), t + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.14);
+}
+
+/* 木が木にあたる音。高く積むほど高い音になる */
+function sKnock(k, vol, delay){
+  var a = audio(); if (!a) return;
+  if (voices > 13) return;
+  var t = a.currentTime + (delay || 0);
+  var f = WOOD[Math.max(0, Math.min(WOOD.length - 1, k))] * (0.98 + Math.random() * 0.04);
+  var o = a.createOscillator(); o.type = 'triangle';
+  o.frequency.setValueAtTime(f * 1.6, t);
+  o.frequency.exponentialRampToValueAtTime(f, t + 0.05);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.34 * (vol || 1), t + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.3);
+  var s = a.createBufferSource(); s.buffer = noiseBuf;
+  var bp = a.createBiquadFilter(); bp.type = 'bandpass';
+  bp.frequency.value = Math.min(6000, f * 8); bp.Q.value = 1.5;
+  var gn = a.createGain();
+  gn.gain.setValueAtTime(0.20 * (vol || 1), t);
+  gn.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+  s.connect(bp); bp.connect(gn); gn.connect(master); s.start(t);
+  free(320);
+}
+
+/* 崩れる音。ころころと続く。失敗の音にしない */
+function sTumble(n){
+  var i, k;
+  for (i = 0; i < n; i++){
+    k = 1 + Math.floor(Math.random() * 4);
+    sKnock(k, 0.7 - i * 0.08, 0.05 + i * (0.07 + Math.random() * 0.05));
+  }
+}
+
+/* 手を止めているあいだ、いちばん上がひとつ減るときの音 */
+function sSink(){
+  var a = audio(); if (!a) return;
+  if (voices > 13) return;
+  var t = a.currentTime;
+  var o = a.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(360, t);
+  o.frequency.exponentialRampToValueAtTime(170, t + 0.3);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.13, t + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.36);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.4);
+  free(420);
+}
+
+/* 積み木が雲にとどいたときの、息のような音 */
+function sCloud(){
+  var a = audio(); if (!a) return;
+  if (voices > 13) return;
+  var t = a.currentTime;
+  var s = a.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+  var lp = a.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(700, t);
+  lp.frequency.exponentialRampToValueAtTime(2400, t + 0.45);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.10, t + 0.14);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+  s.connect(lp); lp.connect(g); g.connect(master);
+  s.start(t); s.stop(t + 0.75);
+  free(800);
+}
+
+/* ---------- 積み木 ---------- */
+var BLK = [
+  ['#dd6f5c', '#ef9d8c', '#b8533f'],
+  ['#eeb44c', '#f9d287', '#c88c2c'],
+  ['#87bd5c', '#b0d78d', '#5f9639'],
+  ['#57a8c8', '#8fcde0', '#3a809d'],
+  ['#c187bd', '#dcafd7', '#96609a'],
+  ['#e2915d', '#f2b58c', '#b96a3a']
+];
+
+var cols = null, falling = [], puffs = [], sinking = [];
+layout();
+cols = [];
+for (var i0 = 0; i0 < NCOL; i0++) cols.push([]);
+resize();
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', function(){ setTimeout(resize, 120); });
+if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+
+function now(){ return (window.performance && performance.now) ? performance.now() : 0; }
+function colOf(x){ return Math.max(0, Math.min(NCOL - 1, Math.floor((x - ORIGIN) / BW))); }
+function colX(i){ return ORIGIN + i * BW + BW / 2; }
+function topOf(i){ return FLOOR - cols[i].length * BH; }
+function total(){ var n = 0; for (var i = 0; i < NCOL; i++) n += cols[i].length; return n; }
+function tallest(){
+  var b = 0, i;
+  for (i = 1; i < NCOL; i++) if (cols[i].length > cols[b].length) b = i;
+  return b;
+}
+function towerTop(){
+  var y = FLOOR, i;
+  for (i = 0; i < NCOL; i++) y = Math.min(y, topOf(i));
+  for (i = 0; i < sinking.length; i++) y = Math.min(y, sinking[i].y - BH / 2);
+  return y;
+}
+
+function newBlock(){
+  return {
+    c: Math.floor(Math.random() * BLK.length),
+    dx: (Math.random() - 0.5) * BW * 0.30,
+    rot: (Math.random() - 0.5) * 0.13,
+    face: Math.random() < 0.42 ? Math.floor(Math.random() * 3) : -1,
+    wob: 0, wph: Math.random() * 6.283
+  };
+}
+
+function dust(x, y, n, hue){
+  for (var i = 0; i < n && puffs.length < 34; i++){
+    var a = -Math.PI * (0.15 + Math.random() * 0.7);
+    var v = 30 + Math.random() * 70;
+    puffs.push({
+      x: x + (Math.random() - 0.5) * BW * 0.7, y: y,
+      vx: Math.cos(a) * v * (Math.random() < 0.5 ? -1 : 1),
+      vy: Math.sin(a) * v,
+      r: 2 + Math.random() * 4, life: 1, col: hue || 'rgba(255,252,240,'
+    });
+  }
+}
+
+function drop(x, y, gentle){
+  if (falling.length > 9) falling.splice(0, falling.length - 9);
+  var i = colOf(x);
+  var b = newBlock();
+  b.x = colX(i) + b.dx * 0.6;
+  b.y = Math.min(y, topOf(i) - BH * 0.7);
+  b.y = Math.max(b.y, BH * 0.6);
+  b.vy = gentle ? 40 : 0;
+  b.vx = 0;
+  b.rotV = (Math.random() - 0.5) * 0.5;
+  b.mode = 0;
+  falling.push(b);
+}
+
+function tumbleOut(i, n){
+  var k, b, dir;
+  for (k = 0; k < n; k++){
+    if (!cols[i].length) break;
+    b = cols[i].pop();
+    b.x = colX(i) + b.dx;
+    b.y = FLOOR - cols[i].length * BH - BH / 2;
+    dir = i < NCOL / 2 ? 1 : -1;
+    if (i > 0 && i < NCOL - 1) dir = cols[i - 1].length <= cols[i + 1].length ? -1 : 1;
+    b.vx = dir * (60 + Math.random() * 90);
+    b.vy = -(50 + Math.random() * 70);
+    b.rotV = dir * (2.4 + Math.random() * 2.4);
+    b.mode = 1;
+    falling.push(b);
+  }
+  sTumble(Math.min(4, n + 1));
+}
+
+function land(b){
+  var i = colOf(b.x);
+  if (cols[i].length >= MAXST){
+    /* いっぱいなら、低いほうへころがっていく */
+    var l = i > 0 ? cols[i - 1].length : 99, r = i < NCOL - 1 ? cols[i + 1].length : 99;
+    if (Math.min(l, r) < MAXST){
+      b.vx = (l <= r ? -1 : 1) * (70 + Math.random() * 60);
+      b.vy = -60; b.mode = 1; b.rotV = (l <= r ? -1 : 1) * 2.6;
+      sKnock(2, 0.6);
+      return false;
+    }
+    tumbleOut(i, 2);
+  }
+  b.wob = 1; b.wph = 0;
+  /* 落ちながら回っていたものも、乗ったら平らに落ち着く */
+  b.rot = (Math.random() - 0.5) * 0.10 + (b.mode ? (Math.random() - 0.5) * 0.12 : 0);
+  cols[i].push(b);
+  sKnock(Math.min(WOOD.length - 1, cols[i].length), b.mode ? 0.75 : 1);
+  dust(b.x, FLOOR - (cols[i].length - 1) * BH, b.mode ? 3 : 5);
+  /* ずれて乗ったものは、するりと隣へ落ちることがある。崩れるのは次の面白い出来事 */
+  if (cols[i].length >= 3 && Math.abs(b.dx) > BW * 0.10 && Math.random() < 0.42){
+    setTimeout(function(){ if (cols[i].length) tumbleOut(i, 1); }, 220);
+  }
+  /* 増えすぎたら、いちばん高いところがひとつ地面へ沈む */
+  if (total() > 27) sinkTop();
+  return true;
+}
+
+function sinkTop(){
+  var i = tallest();
+  if (!cols[i].length) return;
+  var b = cols[i].pop();
+  b.x = colX(i) + b.dx;
+  b.y = FLOOR - cols[i].length * BH - BH / 2;
+  b.life = 1;
+  sinking.push(b);
+  dust(b.x, b.y + BH / 2, 4);
+  sSink();
+}
+
+/* はじめから3つ置いておく。空っぽの画面を見せない */
+(function seed(){
+  var pick = [Math.floor(NCOL / 2) - 1, Math.floor(NCOL / 2), Math.floor(NCOL / 2)];
+  for (var i = 0; i < pick.length; i++){
+    var p = Math.max(0, Math.min(NCOL - 1, pick[i]));
+    var b = newBlock(); b.wob = 0;
+    if (cols[p].length < MAXST) cols[p].push(b);
+  }
+})();
+
+/* ---------- 入力 ---------- */
+var lastTouch = now(), inviteAt = 0, sinkAt = 0, cloudHit = 0;
+
+c.addEventListener('pointerdown', function(e){
+  e.preventDefault();
+  audio();
+  var r = c.getBoundingClientRect();
+  var x = e.clientX - r.left, y = e.clientY - r.top;
+  lastTouch = now();
+  sHold(1);                 /* 触れた瞬間に鳴る。どこを押しても鳴る */
+  drop(x, y, false);
+  puffs.push({ x: x, y: y, ring: 1, life: 1, r: 10 });
+}, { passive: false });
+c.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+
+/* ---------- もどる（700ms 長押し） ---------- */
+var home = document.getElementById('home'), ht = null;
+function hStart(e){
+  e.preventDefault(); e.stopPropagation();
+  home.classList.add('hold');
+  ht = setTimeout(function(){ location.href = '../../'; }, 700);
+}
+function hEnd(e){
+  if (e) e.stopPropagation();
+  home.classList.remove('hold');
+  if (ht){ clearTimeout(ht); ht = null; }
+}
+home.addEventListener('pointerdown', hStart, { passive: false });
+['pointerup','pointerleave','pointercancel'].forEach(function(k){
+  home.addEventListener(k, hEnd);
+});
+
+/* ---------- 空 ---------- */
+/* ひと工夫。積むほど空が高くなって雲が下りてくる。
+   手を止めると上から減っていき、空も雲もゆっくり元へ戻る */
+var sky = 0, skyCache = null, skyAt = -1;
+var down = 0;                     /* 雲がどれだけ下りてきているか。0から1 */
+var topY = 0;                     /* いちばん高い積み木の上端。なめらかに追う */
+var clouds = [
+  { x: 0.22, y: 0.11, s: 1.0, d: 1.00, v: 0.006 },
+  { x: 0.68, y: 0.05, s: 0.72, d: 0.46, v: 0.004 },
+  { x: 0.45, y: 0.18, s: 0.86, d: 0.72, v: -0.005 }
+];
+
+function lerp(a, b, t){ return a + (b - a) * t; }
+function mix(c1, c2, t){
+  return 'rgb(' + Math.round(lerp(c1[0], c2[0], t)) + ',' +
+                  Math.round(lerp(c1[1], c2[1], t)) + ',' +
+                  Math.round(lerp(c1[2], c2[2], t)) + ')';
+}
+var SKY_LO = [[221,235,240],[244,235,214],[247,238,219]];
+var SKY_HI = [[142,186,214],[228,214,190],[246,225,187]];
+
+function paintSky(){
+  if (!skyCache || Math.abs(sky - skyAt) > 0.015){
+    skyAt = sky;
+    skyCache = ctx.createLinearGradient(0, 0, 0, FLOOR);
+    skyCache.addColorStop(0,    mix(SKY_LO[0], SKY_HI[0], sky));
+    skyCache.addColorStop(0.62, mix(SKY_LO[1], SKY_HI[1], sky));
+    skyCache.addColorStop(1,    mix(SKY_LO[2], SKY_HI[2], sky));
+  }
+  ctx.fillStyle = skyCache;
+  ctx.fillRect(0, 0, W, FLOOR + 2);
+}
+
+function blob(cx, cy, s){
+  var e = [[0, 0, 1.15, 0.52], [-0.70, 0.14, 0.66, 0.38],
+           [0.72, 0.10, 0.72, 0.42], [0.10, -0.34, 0.60, 0.42]];
+  ctx.beginPath();
+  for (var i = 0; i < e.length; i++){
+    /* ellipse を続けて呼ぶと前の終点から線が引かれてとがるので、毎回始点へ移す */
+    ctx.moveTo(cx + e[i][0] * s + e[i][2] * s, cy + e[i][1] * s);
+    ctx.ellipse(cx + e[i][0] * s, cy + e[i][1] * s, e[i][2] * s, e[i][3] * s, 0, 0, 6.283);
+  }
+  ctx.fill();
+}
+
+function cloudY(i){
+  var cl = clouds[i];
+  var base = H * cl.y;
+  var y = base + down * cl.d * ((topY + BH * 0.20) - H * clouds[0].y);
+  return Math.min(y, FLOOR - BH * 1.7);      /* 地面まで下りてこない */
+}
+
+function paintClouds(dt){
+  var i, cl, s;
+  for (i = 0; i < clouds.length; i++){
+    cl = clouds[i];
+    cl.x += cl.v * dt;
+    if (cl.x > 1.25) cl.x = -0.25;
+    if (cl.x < -0.25) cl.x = 1.25;
+    s = BW * 0.9 * cl.s;
+    ctx.fillStyle = 'rgba(255,253,248,' + (0.66 + 0.2 * cl.s) + ')';
+    blob(cl.x * W, cloudY(i), s);
+  }
+}
+
+/* 下りてきた雲の底。ここに積み木のてっぺんが入るとふわっと崩れる */
+function cloudLine(){ return cloudY(0) + BW * 0.42; }
+
+/* ---------- 地面 ---------- */
+function paintGround(){
+  var g = ctx.createLinearGradient(0, FLOOR, 0, H);
+  g.addColorStop(0, '#e8cfa2'); g.addColorStop(1, '#d7b681');
+  ctx.fillStyle = g; ctx.fillRect(0, FLOOR, W, H - FLOOR);
+  ctx.fillStyle = 'rgba(190,148,96,.55)';
+  ctx.fillRect(0, FLOOR - 2, W, 3);
+  ctx.fillStyle = 'rgba(255,250,238,.34)';
+  ctx.fillRect(0, FLOOR + 1, W, 2);
+  ctx.fillStyle = 'rgba(150,110,66,.15)';
+  for (var x = (FLOOR * 7) % 30; x < W; x += 30){
+    ctx.fillRect(x, FLOOR + Math.max(10, (H - FLOOR) * 0.30), 14, 4);
+  }
+}
+
+/* ---------- 積み木を描く ---------- */
+function rr(x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function paintBlock(b, cx, cy, rot, alpha, scale){
+  var w = BW * 0.82 * (scale || 1), h = BH * 0.92 * (scale || 1);
+  var p = BLK[b.c], r = Math.min(w, h) * 0.22;
+  ctx.save();
+  ctx.translate(cx, cy); ctx.rotate(rot);
+  if (alpha !== undefined) ctx.globalAlpha = alpha;
+  ctx.fillStyle = 'rgba(120,88,52,.16)';
+  rr(-w / 2 + 2, -h / 2 + 4, w, h, r); ctx.fill();
+  ctx.fillStyle = p[0];
+  rr(-w / 2, -h / 2, w, h, r); ctx.fill();
+  ctx.fillStyle = p[1];
+  rr(-w / 2 + w * 0.06, -h / 2 + h * 0.08, w * 0.88, h * 0.3, r * 0.7); ctx.fill();
+  ctx.fillStyle = p[2];
+  rr(-w / 2 + w * 0.06, h / 2 - h * 0.22, w * 0.88, h * 0.12, r * 0.5); ctx.fill();
+  if (b.face === 0){
+    ctx.fillStyle = 'rgba(255,252,240,.85)';
+    ctx.beginPath(); ctx.arc(0, h * 0.06, Math.min(w, h) * 0.2, 0, 6.283); ctx.fill();
+  } else if (b.face === 1){
+    ctx.fillStyle = 'rgba(255,252,240,.85)';
+    rr(-w * 0.16, h * 0.06 - w * 0.16, w * 0.32, w * 0.32, w * 0.07); ctx.fill();
+  } else if (b.face === 2){
+    ctx.fillStyle = 'rgba(255,252,240,.85)';
+    var s = Math.min(w, h) * 0.24;
+    ctx.beginPath();
+    ctx.moveTo(0, h * 0.06 - s); ctx.lineTo(s * 0.92, h * 0.06 + s * 0.6);
+    ctx.lineTo(-s * 0.92, h * 0.06 + s * 0.6); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* ---------- ループ ---------- */
+var last = 0;
+function frame(t){
+  var dt = last ? Math.min(0.05, (t - last) / 1000) : 0.016;
+  last = t;
+  var i, j, b, idle = (t - lastTouch) / 1000;
+
+  /* 積んだ数で空が変わる。高く積むほど雲が下りてくる。減れば両方とも戻る */
+  var tall = tallest();
+  var want = Math.min(1, total() / 13);
+  sky += (want - sky) * Math.min(1, dt * 1.6);
+  var wantDown = Math.min(1, cols[tall].length / 4);
+  down += (wantDown - down) * Math.min(1, dt * 1.1);
+  var wantTop = towerTop();
+  topY = topY ? topY + (wantTop - topY) * Math.min(1, dt * 3.2) : wantTop;
+
+  /* 手を止めているあいだの動き。空っぽに近ければ自分から落ちてくる */
+  if (idle > 3){
+    if (total() + falling.length <= 3){
+      if (t - inviteAt > 1900){
+        inviteAt = t;
+        var ci = Math.floor(Math.random() * NCOL);
+        sHold(0.55);
+        drop(colX(ci), H * 0.18, true);
+      }
+    } else if (idle > 4 && t - sinkAt > 1150){
+      sinkAt = t;
+      sinkTop();
+    }
+  }
+
+  paintSky();
+  paintClouds(dt);
+
+  /* 積み木のてっぺんが、下りてきた雲に入ったとき */
+  /* 下りるほど、いちばん高いところへ雲が寄っていく */
+  var tx = colX(tall);
+  clouds[0].x += (tx / W - clouds[0].x) * Math.min(1, dt * 1.5 * down);
+  if (wantTop < cloudLine() && Math.abs(W * clouds[0].x - tx) < BW * 2.2 && t - cloudHit > 800){
+    cloudHit = t;
+    sCloud();
+    for (i = 0; i < 9 && puffs.length < 34; i++){
+      puffs.push({
+        x: tx + (Math.random() - 0.5) * BW * 1.4,
+        y: wantTop + (Math.random() - 0.4) * BW * 0.5,
+        vx: (Math.random() - 0.5) * 60, vy: -25 - Math.random() * 45,
+        r: 4 + Math.random() * 7, life: 1
+      });
+    }
+  }
+
+  paintGround();
+
+  /* 積んであるもの。着地のゆれを上へ伝える */
+  for (i = 0; i < NCOL; i++){
+    for (j = 0; j < cols[i].length; j++){
+      b = cols[i][j];
+      if (b.wob > 0){ b.wob = Math.max(0, b.wob - dt * 2.6); b.wph += dt * 26; }
+      var sh = b.wob > 0 ? Math.sin(b.wph) * b.wob * BW * 0.05 * (0.4 + j / Math.max(1, cols[i].length)) : 0;
+      paintBlock(b, colX(i) + b.dx + sh, FLOOR - j * BH - BH / 2, b.rot + sh * 0.004, 1, 1);
+    }
+  }
+
+  /* 落ちてくるもの */
+  for (i = falling.length - 1; i >= 0; i--){
+    b = falling[i];
+    b.vy += 1900 * dt;
+    b.y += b.vy * dt;
+    b.x += b.vx * dt;
+    b.rot += b.rotV * dt;
+    if (b.mode) b.vx *= (1 - dt * 1.1);
+    if (b.x < BW * 0.4){ b.x = BW * 0.4; b.vx = Math.abs(b.vx) * 0.4; }
+    if (b.x > W - BW * 0.4){ b.x = W - BW * 0.4; b.vx = -Math.abs(b.vx) * 0.4; }
+    var ci2 = colOf(b.x), ty = FLOOR - cols[ci2].length * BH - BH / 2;
+    if (b.y >= ty){
+      b.y = ty;
+      if (land(b)){ falling.splice(i, 1); continue; }
+      b.y = ty - 2;
+    }
+    paintBlock(b, b.x, b.y, b.rot, 1, 1);
+  }
+
+  /* 沈んでいくもの */
+  for (i = sinking.length - 1; i >= 0; i--){
+    b = sinking[i];
+    b.life -= dt * 1.5;
+    if (b.life <= 0){ sinking.splice(i, 1); continue; }
+    paintBlock(b, b.x, b.y + (1 - b.life) * BH * 0.5, b.rot, b.life, 0.4 + b.life * 0.6);
+  }
+
+  /* こまかいもの */
+  for (i = puffs.length - 1; i >= 0; i--){
+    var p = puffs[i];
+    p.life -= dt * (p.ring ? 2.2 : 1.4);
+    if (p.life <= 0){ puffs.splice(i, 1); continue; }
+    if (p.ring){
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r + (1 - p.life) * 34, 0, 6.283);
+      ctx.strokeStyle = 'rgba(255,252,242,' + (p.life * 0.7) + ')';
+      ctx.lineWidth = 2 + p.life * 3;
+      ctx.stroke();
+    } else {
+      p.vy += 260 * dt;
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r * (0.4 + p.life * 0.6), 0, 6.283);
+      ctx.fillStyle = 'rgba(255,251,238,' + (p.life * 0.8) + ')';
+      ctx.fill();
+    }
+  }
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
