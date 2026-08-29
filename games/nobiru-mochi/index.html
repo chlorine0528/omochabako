@@ -98,39 +98,83 @@ const Snd = (() => {
     osc.start(now); osc.stop(now + dur + 0.02);
     osc.onended = () => { voices = Math.max(0, voices - 1); };
   }
-  // 引く1声。指を離すまで鳴り、離した瞬間に着地音を1つ
+  // ちぎれた瞬間の「パッ」。ノイズの短いバーストと明るい1音を重ねる
+  let noiseBuf = null;
+  function pop() {
+    const c = wake(); if (!c) return;
+    if (!noiseBuf) {
+      noiseBuf = c.createBuffer(1, Math.floor(c.sampleRate * 0.12), c.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    }
+    const now = c.currentTime;
+    const src = c.createBufferSource(); src.buffer = noiseBuf;
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass';
+    bp.frequency.value = jit(1700, 0.08); bp.Q.value = 0.7;
+    const ng = c.createGain();
+    ng.gain.setValueAtTime(0.001, now);
+    ng.gain.linearRampToValueAtTime(1.5, now + 0.004);   // 立ち上がりを少し寝かせて割れを防ぐ
+    ng.gain.exponentialRampToValueAtTime(0.0001, now + 0.10);
+    src.connect(bp); bp.connect(ng); ng.connect(master); src.start(now);
+    const osc = c.createOscillator(), og = c.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(jit(1250, 0.06), now);
+    osc.frequency.exponentialRampToValueAtTime(jit(700, 0.06), now + 0.11);
+    og.gain.setValueAtTime(0.0001, now);
+    og.gain.linearRampToValueAtTime(0.38, now + 0.005);
+    og.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+    osc.connect(og); og.connect(master);
+    osc.start(now); osc.stop(now + 0.18);
+  }
+  // 引く1声。指を離すまで鳴り続ける「ビヨーン」。離した瞬間に着地音を1つ
   function pullVoice() {
     const c = wake();
     if (!c || voices >= MAX_VOICES) return {update() {}, release() {}};
     voices++;
-    const osc = c.createOscillator(), gain = c.createGain(), lp = c.createBiquadFilter();
-    osc.type = 'triangle'; lp.type = 'lowpass'; lp.frequency.value = 1800;
+    // 電話のスピーカーは低い音をほとんど出さないので、倍音のある波形と1オクターブ上を重ねる
+    const osc = c.createOscillator(), sub = c.createOscillator();
+    const gain = c.createGain(), lp = c.createBiquadFilter();
+    const lfo = c.createOscillator(), lfoG = c.createGain();
+    osc.type = 'sawtooth'; sub.type = 'triangle';
+    lp.type = 'lowpass'; lp.Q.value = 6; lp.frequency.value = 900;
     gain.gain.value = 0;
-    osc.connect(lp); lp.connect(gain); gain.connect(master);
-    osc.start();
+    lfo.type = 'sine'; lfo.frequency.value = 5.5; lfoG.gain.value = 0;  // 伸ばすほど揺れるゴムの震え
+    lfo.connect(lfoG); lfoG.connect(osc.frequency); lfoG.connect(sub.frequency);
+    osc.connect(lp); sub.connect(lp); lp.connect(gain); gain.connect(master);
+    osc.start(); sub.start(); lfo.start();
     let dead = false;
+    const fq = k => 260 + k * 440;
     return {
       update(k) {
         if (dead) return;
-        const now = c.currentTime;
-        osc.frequency.setTargetAtTime(200 + k * 400, now, 0.02);
-        gain.gain.setTargetAtTime(0.05 + k * 0.20, now, 0.03);
-        lp.frequency.setTargetAtTime(900 + k * 3200, now, 0.03);
+        const now = c.currentTime, f = fq(k);
+        osc.frequency.setTargetAtTime(f, now, 0.02);
+        sub.frequency.setTargetAtTime(f * 2, now, 0.02);
+        lp.frequency.setTargetAtTime(f * 2.6 + 500, now, 0.03);
+        lfoG.gain.setTargetAtTime(4 + k * 14, now, 0.05);
+        gain.gain.setTargetAtTime(0.05 + k * 0.14, now, 0.03);
       },
       release(k, broke) {
         if (dead) return; dead = true;
         voices = Math.max(0, voices - 1);
-        const now = c.currentTime;
-        osc.frequency.cancelScheduledValues(now);
-        osc.frequency.setValueAtTime(200 + k * 400, now);
-        osc.frequency.exponentialRampToValueAtTime(Math.max(60, 150 * (1 + k)), now + 0.18);
+        const now = c.currentTime, f = fq(k);
+        [osc, sub].forEach((o, i) => {
+          const m = i ? 2 : 1;
+          o.frequency.cancelScheduledValues(now);
+          o.frequency.setValueAtTime(f * m, now);
+          o.frequency.exponentialRampToValueAtTime(Math.max(70, 190 * (1 + k)) * m, now + 0.18);
+          o.stop(now + 0.6);
+        });
+        lp.frequency.setTargetAtTime(700, now, 0.08);
+        lfoG.gain.setTargetAtTime(0, now, 0.05);
         gain.gain.setTargetAtTime(0, now + 0.04, 0.06);
-        osc.stop(now + 0.6);
-        ping(broke ? jit(520 + k * 240) : jit(300 + k * 160), broke ? 0.22 : 0.13);
+        lfo.stop(now + 0.6);
+        if (broke) pop();                                   // ちぎれた瞬間はパッ
+        else ping(jit(300 + k * 160), 0.13);                // 戻りきった1音
       }
     };
   }
-  return {wake, ping, pullVoice, jit};
+  return {wake, ping, pop, pullVoice, jit};
 })();
 
 // ---------- 部品 ----------
@@ -267,7 +311,9 @@ function endPointer(e) {
     b.r = Math.max(b.r * 0.9, U * R_FLOOR);   // これ以上小さくしない
     if (b.life < 0) b.life = 0;               // 消えかけを触ったら生き返る
     addParticles(tipx, tipy, child.hue, kind === 'nushi' ? 22 : 12);
-    Snd.ping(pentaFreq(child.tone), 0.24, kind === 'nushi' ? 'square' : 'triangle', 0.14);
+    // パッと同時に鳴らすと輪郭が濁るので、生まれたもちの音は少し遅らせる
+    setTimeout(() => Snd.ping(pentaFreq(child.tone), 0.24,
+                              kind === 'nushi' ? 'square' : 'triangle', 0.14), 130);
     // 巡り。増えすぎたら古いもちが縮んで消える。いま遊んでいる相手は選ばない
     if (blobs.length > MAX_BLOBS) {
       const oldest = kind => blobs.find(x => x !== b && x.grab === null &&
