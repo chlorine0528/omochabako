@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#f4f1ea">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="robots" content="noindex,nofollow">
+<title>のびるもち</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #f4f1ea;
+    touch-action: none;
+    overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  canvas { display: block; touch-action: none; }
+  #home{
+    position:fixed; top:max(10px, env(safe-area-inset-top)); left:max(10px, env(safe-area-inset-left));
+    width:40px; height:40px; padding:0; border:0; border-radius:50%;
+    background:rgba(255,255,255,.42); backdrop-filter:blur(2px);
+    display:grid; place-items:center; cursor:pointer; z-index:5;
+    touch-action:none; -webkit-tap-highlight-color:transparent;
+  }
+  #home svg{ width:34px; height:34px; display:block; }
+  #home .trk{ fill:none; stroke:rgba(74,92,96,.22); stroke-width:2.5; }
+  #home .rng{
+    fill:none; stroke:#4a5c60; stroke-width:2.5; stroke-linecap:round;
+    stroke-dasharray:94.2; stroke-dashoffset:94.2;
+    transform:rotate(-90deg); transform-origin:50% 50%;
+    transition:stroke-dashoffset .04s linear;
+  }
+  #home.hold .rng{ stroke-dashoffset:0; transition:stroke-dashoffset .7s linear; }
+  #home .ico{ fill:#4a5c60; opacity:.72; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="home" aria-label="おもちゃばこに もどる">
+  <svg viewBox="0 0 36 36" aria-hidden="true">
+    <circle class="trk" cx="18" cy="18" r="15"/>
+    <circle class="rng" cx="18" cy="18" r="15"/>
+    <path class="ico" d="M18 9.4 10.2 16v9.1c0 .6.5 1.1 1.1 1.1h4.1v-5.3h5.2v5.3h4.1c.6 0 1.1-.5 1.1-1.1V16z"/>
+  </svg>
+</button>
+<script>
+/* のびるもち。動詞は「引く」1つだけ。
+   もう1回の型は蓄積＋変異＋住人＋巡り。
+   裏切りは6回目のちぎれで住人が出ること。触っている物の上で起きる。 */
+'use strict';
+
+// ---------- 画面 ----------
+const cv = document.getElementById('c');
+const g = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1, U = 100; // U は基準寸法（画面の短辺の12%）
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  U = Math.max(48, Math.min(W, H) * 0.12); // 実機で20mm角以上を確保する
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------- 音 ----------
+const Snd = (() => {
+  let ctx = null, master = null, voices = 0;
+  const MAX_VOICES = 16;
+  function wake() {
+    if (!ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = 0.7;
+      const comp = ctx.createDynamicsCompressor();   // 同時発音が増えても割れないように
+      master.connect(comp);
+      comp.connect(ctx.destination);
+    }
+    if (ctx.state === 'suspended') ctx.resume();
+    return ctx;
+  }
+  const jit = (v, pct = 0.04) => v * (1 + (Math.random() * 2 - 1) * pct);
+  function ping(freq, dur = 0.2, type = 'sine', vol = 0.16) {
+    const c = wake(); if (!c || voices >= MAX_VOICES) return;
+    voices++;
+    const osc = c.createOscillator(), gain = c.createGain();
+    osc.type = type; osc.frequency.value = jit(freq);
+    const now = c.currentTime;
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(vol, now + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    osc.connect(gain); gain.connect(master);
+    osc.start(now); osc.stop(now + dur + 0.02);
+    osc.onended = () => { voices = Math.max(0, voices - 1); };
+  }
+  // 引く1声。指を離すまで鳴り、離した瞬間に着地音を1つ
+  function pullVoice() {
+    const c = wake();
+    if (!c || voices >= MAX_VOICES) return {update() {}, release() {}};
+    voices++;
+    const osc = c.createOscillator(), gain = c.createGain(), lp = c.createBiquadFilter();
+    osc.type = 'triangle'; lp.type = 'lowpass'; lp.frequency.value = 1800;
+    gain.gain.value = 0;
+    osc.connect(lp); lp.connect(gain); gain.connect(master);
+    osc.start();
+    let dead = false;
+    return {
+      update(k) {
+        if (dead) return;
+        const now = c.currentTime;
+        osc.frequency.setTargetAtTime(200 + k * 400, now, 0.02);
+        gain.gain.setTargetAtTime(0.05 + k * 0.20, now, 0.03);
+        lp.frequency.setTargetAtTime(900 + k * 3200, now, 0.03);
+      },
+      release(k, broke) {
+        if (dead) return; dead = true;
+        voices = Math.max(0, voices - 1);
+        const now = c.currentTime;
+        osc.frequency.cancelScheduledValues(now);
+        osc.frequency.setValueAtTime(200 + k * 400, now);
+        osc.frequency.exponentialRampToValueAtTime(Math.max(60, 150 * (1 + k)), now + 0.18);
+        gain.gain.setTargetAtTime(0, now + 0.04, 0.06);
+        osc.stop(now + 0.6);
+        ping(broke ? jit(520 + k * 240) : jit(300 + k * 160), broke ? 0.22 : 0.13);
+      }
+    };
+  }
+  return {wake, ping, pullVoice, jit};
+})();
+
+// ---------- 部品 ----------
+const PENTA = [0, 2, 4, 7, 9];
+const pentaFreq = (i, base = 261.63) =>
+  base * Math.pow(2, Math.floor(i / 5) + PENTA[((i % 5) + 5) % 5] / 12);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const rnd = (a, b) => a + Math.random() * (b - a);
+const breathe = (t, seed, amp = 0.022, hz = 0.33) =>
+  1 + Math.sin(t * hz * Math.PI * 2 + seed) * amp;
+function spring(s, target, dt, stiff = 200, damp = 13) {
+  s.v += ((target - s.x) * stiff - s.v * damp) * dt;
+  s.x += s.v * dt;
+  return s.x;
+}
+function gaze(cx, cy, px, py, reach = 0.3, max = 14) {
+  const dx = px - cx, dy = py - cy, d = Math.hypot(dx, dy) || 1;
+  const k = Math.min(d * reach, max) / d;
+  return {x: dx * k, y: dy * k};
+}
+
+// ---------- 状態 ----------
+const MAX_BLOBS = 6;          // 超えたら古いもちが縮んで消える（巡り）
+const R_FLOOR = 0.85;         // 半径の下限。U 比。判定1.4倍で20mm角を割らないため
+const MAX_PARTICLES = 120;
+const blobs = [], particles = [], ripples = [];
+const MAX_RIPPLES = 10;
+let breakCount = 0, lastInput = performance.now(), born = 0;
+
+function makeBlob(x, y, r, kind) {
+  born++;
+  return {
+    id: born, kind: kind || 'mochi', x, y, r,
+    hue: kind === 'nushi' ? rnd(20, 45) : rnd(330, 360),
+    seed: rnd(0, 6.28),
+    st: {x: 0, v: 0},        // 伸びのバネ。中断可能
+    dir: {x: 0, y: -1},
+    grab: null,              // つかんでいる pointerId
+    fx: 0, fy: 0,            // 指の位置
+    gz: {x: 0, y: 0}, gzT: {x: 0, y: 0},
+    pr: 0,                   // 押した瞬間のへこみ。1フレームで見た目を変えるため
+    tone: born % 10,
+    wx: rnd(-1, 1), wy: rnd(-1, 1), wt: rnd(0, 100), // 住人の徘徊
+    voice: null, k: 0, life: 0
+  };
+}
+blobs.push(makeBlob(W / 2, H / 2, U * 1.15, 'mochi'));
+
+function addParticles(x, y, hue, n) {
+  for (let i = 0; i < n; i++) {
+    if (particles.length >= MAX_PARTICLES) particles.shift();
+    const a = rnd(0, 6.283), s = rnd(60, 340);
+    particles.push({x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 60,
+                    r: rnd(3, 9), hue, life: 1});
+  }
+}
+
+// 対象を外して触ったときも、その場所で何かが返る
+const SPLASH_HUES = [12, 42, 168, 196, 322];   // 紫と青に寄せない
+function splash(x, y) {
+  const hue = SPLASH_HUES[Math.floor(Math.random() * SPLASH_HUES.length)];
+  if (ripples.length >= MAX_RIPPLES) ripples.shift();
+  ripples.push({x, y, r: U * 0.2, hue, life: 1});
+  addParticles(x, y, hue, 5);
+  Snd.ping(pentaFreq(2 + Math.floor(rnd(0, 8))), 0.16, 'sine', 0.09);
+}
+
+// ---------- 入力。全ポインターを保持する ----------
+const pointers = new Map(), trail = new Map();
+function pick(x, y) {
+  // 当たり判定は見た目の1.4倍。上（手前）から探す
+  for (let i = blobs.length - 1; i >= 0; i--) {
+    const b = blobs[i];
+    if (b.grab !== null) continue;
+    // 判定は見た目の1.4倍。消えかけでも救えるように下限を持たせる
+    const rr = Math.max(b.r, U * R_FLOOR) * 1.4;
+    if ((x - b.x) ** 2 + (y - b.y) ** 2 < rr * rr) return b;
+  }
+  return null;
+}
+cv.addEventListener('pointerdown', e => {
+  try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+  lastInput = performance.now();
+  Snd.wake(); // 最初の接触で起こす
+  const b = pick(e.clientX, e.clientY);
+  if (!b) { splash(e.clientX, e.clientY); return; }  // 空振りを作らない
+  b.grab = e.pointerId; b.fx = e.clientX; b.fy = e.clientY;
+  b.voice = Snd.pullVoice();
+  b.st.v = 0;
+  b.pr = 0.20;              // 触れた最初のフレームでへこむ。演出の完了を待たない
+  pointers.set(e.pointerId, b);
+  Snd.ping(pentaFreq(b.tone), 0.12, 'sine', 0.10);
+  if (b.kind === 'nushi') { // 住人は押されたら縮んで跳ねて鳴く
+    b.pr = 0.30; b.st.v = 6;
+    Snd.ping(pentaFreq(b.tone + 5), 0.16, 'triangle', 0.16);
+  }
+});
+cv.addEventListener('pointermove', e => {
+  lastInput = performance.now();
+  const b = pointers.get(e.pointerId);
+  if (!b) {                          // どこもつかんでいない指にも返す
+    const last = trail.get(e.pointerId);
+    if (!last || Math.hypot(e.clientX - last.x, e.clientY - last.y) > U * 0.7) {
+      trail.set(e.pointerId, {x: e.clientX, y: e.clientY});
+      splash(e.clientX, e.clientY);
+    }
+    return;
+  }
+  b.fx = e.clientX; b.fy = e.clientY;
+});
+function endPointer(e) {
+  lastInput = performance.now();
+  const b = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  trail.delete(e.pointerId);
+  if (!b) return;
+  b.grab = null;
+  const k = b.k;
+  const broke = b.kind === 'mochi' && k > 0.66;
+  if (b.voice) { b.voice.release(k, broke); b.voice = null; }
+  if (broke) {
+    breakCount++;
+    const cr = Math.max(b.r * 0.6, U * R_FLOOR);
+    const tipx = clamp(b.x + b.dir.x * b.r * (1 + k * 2.6) + rnd(-cr * 0.5, cr * 0.5),
+                       cr * 1.2, W - cr * 1.2);
+    const tipy = clamp(b.y + b.dir.y * b.r * (1 + k * 2.6) + rnd(-cr * 0.5, cr * 0.5),
+                       cr * 1.2, H - cr * 1.2);
+    // 裏切りは6回に1回。触っている物の先で起きる
+    const kind = (breakCount % 6 === 0) ? 'nushi' : 'mochi';
+    const child = makeBlob(tipx, tipy, cr, kind);
+    child.dir = {x: b.dir.x, y: b.dir.y};
+    child.st.x = 0.5; child.st.v = -2.4;
+    blobs.push(child);
+    b.r = Math.max(b.r * 0.9, U * R_FLOOR);   // これ以上小さくしない
+    if (b.life < 0) b.life = 0;               // 消えかけを触ったら生き返る
+    addParticles(tipx, tipy, child.hue, kind === 'nushi' ? 22 : 12);
+    Snd.ping(pentaFreq(child.tone), 0.24, kind === 'nushi' ? 'square' : 'triangle', 0.14);
+    // 巡り。増えすぎたら古いもちが縮んで消える。いま遊んでいる相手は選ばない
+    if (blobs.length > MAX_BLOBS) {
+      const oldest = kind => blobs.find(x => x !== b && x.grab === null &&
+                                             x.life >= 0 && (!kind || x.kind === kind));
+      const many = blobs.filter(x => x.kind === 'nushi').length > 2;
+      const old = (many ? oldest('nushi') : null) || oldest('mochi') || oldest(null);
+      if (old) old.life = -1;
+    }
+  }
+  b.st.v -= 6 * k; // 行き過ぎてから収束する
+}
+cv.addEventListener('pointerup', endPointer);
+cv.addEventListener('pointercancel', endPointer);
+cv.addEventListener('contextmenu', e => e.preventDefault());
+
+// ---------- 誘い。言葉を出さない ----------
+function idleStage(now) {
+  const s = (now - lastInput) / 1000;
+  return s < 3 ? 0 : s < 8 ? 1 : s < 15 ? 2 : 3;
+}
+let invitePhase = 0;
+
+// ---------- 描画 ----------
+function drawBlob(b, t) {
+  const bs = breathe(t, b.seed, b.grab !== null ? 0.006 : 0.024);
+  const r = b.r * bs;
+  const k = b.st.x - b.pr;           // 正で伸び、負で潰れる。pr は押した瞬間のへこみ
+  const kp = Math.max(0, k), kn = Math.max(0, -k);
+  const L = r * (1 + kp * 2.6) * (1 - kn * 0.22);          // アンカーから先端まで
+  const anchorR = r * (1 - kp * 0.20 + kn * 0.24);
+  const tipR = r * (0.82 - kp * 0.40 + kn * 0.10);
+  const dip = kp * 0.44;                                    // くびれの深さ
+  const wob = b.grab !== null ? Math.sin(t * 26 + b.seed) * 0.05 * kp : 0; // 輪郭の震え
+  const half = s => {
+    const base = anchorR * (1 - s) + tipR * s;
+    return base * (1 - dip * Math.sin(Math.PI * s) + wob * Math.sin(Math.PI * s * 3));
+  };
+  const light = b.kind === 'nushi' ? 62 : 78;
+  const sat = b.kind === 'nushi' ? 62 : 52;
+
+  // 影。ぼかしを強くしない
+  g.fillStyle = 'rgba(60,45,40,0.10)';
+  g.beginPath();
+  g.ellipse(b.x, b.y + r * 0.94, r * 0.88, r * 0.20, 0, 0, 6.2832);
+  g.fill();
+
+  g.save();
+  g.translate(b.x, b.y);
+  g.rotate(Math.atan2(b.dir.y, b.dir.x));   // 局所座標。x が引く向き
+  g.fillStyle = `hsl(${b.hue} ${sat}% ${light}%)`;
+  g.strokeStyle = `hsl(${b.hue} ${sat - 14}% ${light - 32}%)`;
+  g.lineWidth = Math.max(3, r * 0.06);
+  const N = 22;
+  g.beginPath();
+  g.moveTo(0, anchorR);
+  for (let i = 1; i <= N; i++) { const s = i / N; g.lineTo(L * s, half(s)); }
+  g.arc(L, 0, tipR, Math.PI / 2, -Math.PI / 2, true);        // 先端の丸み
+  for (let i = N - 1; i >= 0; i--) { const s = i / N; g.lineTo(L * s, -half(s)); }
+  g.arc(0, 0, anchorR, -Math.PI / 2, Math.PI / 2, true);     // アンカーの丸み
+  g.closePath();
+  g.fill(); g.stroke();
+  // 光の当たり。位置が読めるように1つだけ
+  g.globalAlpha = 0.35;
+  g.fillStyle = `hsl(${b.hue} ${sat - 10}% ${Math.min(96, light + 14)}%)`;
+  g.beginPath();
+  g.ellipse(-anchorR * 0.18, -anchorR * 0.34, anchorR * 0.42, anchorR * 0.24,
+            -0.5, 0, 6.2832);
+  g.fill();
+  g.globalAlpha = 1;
+  g.restore();
+
+  // 住人は指を見る。もちは目を持たない
+  if (b.kind === 'nushi') {
+    const ex = b.x + b.gz.x, ey = b.y + b.gz.y - r * 0.12;
+    g.fillStyle = '#2b2530';
+    g.beginPath(); g.arc(ex - r * 0.27, ey, r * 0.115, 0, 6.2832); g.fill();
+    g.beginPath(); g.arc(ex + r * 0.27, ey, r * 0.115, 0, 6.2832); g.fill();
+  }
+}
+
+// ---------- ループ ----------
+let prev = performance.now();
+function frame(now) {
+  const dt = Math.min(0.033, (now - prev) / 1000); prev = now;
+  const t = now / 1000;
+  const stage = idleStage(now);
+
+  // 誘い。段が上がるほど自分から動くが、15秒以上は強めない
+  if (stage >= 1) {
+    invitePhase += dt;
+    const lead = blobs.reduce((a, b) => (b.r > (a ? a.r : 0) ? b : a), null);
+    if (lead && lead.grab === null) {
+      if (stage >= 2) { // 触られる位置へ自分から寄る
+        lead.x += (W / 2 - lead.x) * dt * 0.6;
+        lead.y += (H / 2 - lead.y) * dt * 0.6;
+      }
+      if (stage >= 3) {                 // 前回の結果をゆっくり再生する
+        if (invitePhase > 4.5) {
+          invitePhase = 0; lead.st.x = 0.5; lead.st.v = 0.1;
+          lead.dir = {x: 0, y: -1};
+        }
+      } else if (invitePhase > 2.2) {    // 1回だけ小さく跳ねる
+        invitePhase = 0; lead.pr = 0.20; lead.st.v = 4.0;
+      }
+    }
+  } else invitePhase = 0;
+
+  for (let i = blobs.length - 1; i >= 0; i--) {
+    const b = blobs[i];
+    if (b.life < 0) { // 巡り。縮んで消える
+      b.r -= U * dt * 1.1;
+      if (b.r < U * 0.12) { addParticles(b.x, b.y, b.hue, 8); blobs.splice(i, 1); continue; }
+    }
+    if (b.grab !== null) {
+      const dx = b.fx - b.x, dy = b.fy - b.y, d = Math.hypot(dx, dy) || 1;
+      b.dir = {x: dx / d, y: dy / d};
+      b.k = clamp((d - b.r * 0.6) / (b.r * 3.4), 0, 1);
+      b.st.x = b.k; b.st.v = 0;              // 引いている間は指に直結する
+      if (b.voice) b.voice.update(b.k);
+    } else {
+      b.k = Math.max(0, b.st.x);
+      // 誘いのときだけ柔らかくして、ゆっくり伸びて戻るように見せる
+      if (stage >= 3) spring(b.st, 0, dt, 30, 9);
+      else spring(b.st, 0, dt, 210, 12);     // 行き過ぎてから収束
+      if (Math.abs(b.st.x) < 0.002 && Math.abs(b.st.v) < 0.02) { b.st.x = 0; b.st.v = 0; }
+    }
+    b.pr = Math.max(0, b.pr - dt * 1.6);     // へこみは140ms前後で戻る
+    if (b.kind === 'nushi') {                // 住人は自分で歩く
+      b.wt += dt;
+      if (b.wt > 2.4) { b.wt = 0; b.wx = rnd(-1, 1); b.wy = rnd(-1, 1); }
+      if (b.grab === null) {
+        b.x = clamp(b.x + b.wx * dt * U * 0.55, b.r, W - b.r);
+        b.y = clamp(b.y + b.wy * dt * U * 0.55, b.r, H - b.r);
+      }
+      let near = null, nd = 1e9;
+      pointers.forEach(p => {
+        const d = Math.hypot(p.fx - b.x, p.fy - b.y);
+        if (d < nd) { nd = d; near = p; }
+      });
+      b.gzT = near ? gaze(b.x, b.y, near.fx, near.fy, 0.3, b.r * 0.18)
+                   : {x: b.gz.x * 0.9, y: b.gz.y * 0.9};
+      b.gz.x += (b.gzT.x - b.gz.x) * dt * 4;
+      b.gz.y += (b.gzT.y - b.gz.y) * dt * 4;
+    }
+  }
+
+  // 重なりをほどく。触る対象の間隔を確保する
+  for (let i = 0; i < blobs.length; i++) {
+    for (let j = i + 1; j < blobs.length; j++) {
+      const a = blobs[i], c = blobs[j];
+      const dx = c.x - a.x, dy = c.y - a.y, d = Math.hypot(dx, dy) || 1;
+      const want = (a.r + c.r) * 1.18;
+      if (d >= want) continue;
+      const push = ((want - d) / want) * U * 2.2 * dt, ux = dx / d, uy = dy / d;
+      if (a.grab === null) { a.x -= ux * push; a.y -= uy * push; }
+      if (c.grab === null) { c.x += ux * push; c.y += uy * push; }
+    }
+  }
+  blobs.forEach(b => {
+    b.x = clamp(b.x, b.r * 1.05, Math.max(b.r * 1.05, W - b.r * 1.05));
+    b.y = clamp(b.y, b.r * 1.05, Math.max(b.r * 1.05, H - b.r * 1.05));
+  });
+
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const rp = ripples[i];
+    rp.r += U * 2.6 * dt; rp.life -= dt * 1.5;
+    if (rp.life <= 0) ripples.splice(i, 1);
+  }
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.vy += 900 * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+    p.life -= dt * 1.1;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = '#f4f1ea'; g.fillRect(0, 0, W, H);
+  ripples.forEach(rp => {
+    g.globalAlpha = clamp(rp.life, 0, 1) * 0.7;
+    g.strokeStyle = `hsl(${rp.hue} 55% 62%)`;
+    g.lineWidth = Math.max(3, U * 0.09 * rp.life);
+    g.beginPath(); g.arc(rp.x, rp.y, rp.r, 0, 6.2832); g.stroke();
+  });
+  g.globalAlpha = 1;
+  blobs.forEach(b => drawBlob(b, t));
+  particles.forEach(p => {
+    g.globalAlpha = clamp(p.life, 0, 1);
+    g.fillStyle = `hsl(${p.hue} 55% 70%)`;
+    g.beginPath(); g.arc(p.x, p.y, p.r, 0, 6.2832); g.fill();
+  });
+  g.globalAlpha = 1;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ---------- もどる（700ms 長押し） ---------- */
+var home = document.getElementById('home'), ht = null;
+function hStart(e){
+  e.preventDefault(); e.stopPropagation();
+  home.classList.add('hold');
+  ht = setTimeout(function(){ location.href = '../../'; }, 700);
+}
+function hEnd(e){
+  if (e) e.stopPropagation();
+  home.classList.remove('hold');
+  if (ht){ clearTimeout(ht); ht = null; }
+}
+home.addEventListener('pointerdown', hStart, { passive: false });
+['pointerup','pointerleave','pointercancel'].forEach(function(k){
+  home.addEventListener(k, hEnd);
+});
+</script>
+</body>
+</html>
