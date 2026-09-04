@@ -56,6 +56,7 @@
 /* ぷちぷち。動詞は「押す」1つだけ。
    連続量は接触時間（へこみの深さと広がる波）と同時接触数（潰れる範囲と和音）。
    もう1回の型は巡り。潰した粒はしばらくすると自分でふくらんで戻る。
+   音は、押した順番に関わらず「きらきら星」が1音ずつ進む。5秒手を止めると頭に戻る。
    ひと工夫は「隠れているものが出る」。9〜14個ためると、いま潰した粒の跡から住人が出る。 */
 
 /* ---------- 画面 ---------- */
@@ -85,7 +86,6 @@ function makeCells(){
         q: q, r: r,
         x: (q + 0.5) * cw, y: (r + 0.5) * ch,
         hue: PAL[(q * 3 + r * 2) % PAL.length],
-        tone: (q * 2 + r) % 13,
         seed: rnd(0, 6.28),
         p: prev ? prev.p : 1,          /* ふくらみ。1でまる、0でぺたんこ */
         pv: prev ? prev.pv : 0,
@@ -111,47 +111,90 @@ resize();
 
 /* ---------- 音 ---------- */
 var Snd = (function(){
-  var ctx = null, master = null, voices = 0;
-  var MAX_VOICES = 8;
+  var ctx = null, master = null, live = [];
+  var MAX_VOICES = 12;
   function wake(){
     if (!ctx){
       var AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return null;
       ctx = new AC();
       master = ctx.createGain();
-      master.gain.value = 0.62;
+      master.gain.value = 0.58;
       var comp = ctx.createDynamicsCompressor();
       master.connect(comp); comp.connect(ctx.destination);
     }
     if (ctx.state === 'suspended') ctx.resume();
     return ctx;
   }
-  var jit = function(v, pct){ pct = pct === undefined ? 0.045 : pct;
+  var jit = function(v, pct){ pct = pct === undefined ? 0.004 : pct;
     return v * (1 + (Math.random() * 2 - 1) * pct); };
-  function ping(freq, dur, type, vol, delay){
-    var c = wake();
-    if (!c || voices >= MAX_VOICES) return;
-    voices++;
-    var osc = c.createOscillator(), gain = c.createGain();
-    osc.type = type || 'sine';
-    osc.frequency.value = jit(freq);
-    var now = c.currentTime + (delay || 0);
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(vol === undefined ? 0.16 : vol, now + 0.006);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + (dur || 0.13));
-    osc.connect(gain); gain.connect(master);
-    osc.start(now); osc.stop(now + (dur || 0.13) + 0.02);
-    osc.onended = function(){ voices = Math.max(0, voices - 1); };
+  /* 上限に当たったら古い音を消して席を空ける。押しても鳴らない状態を作らないため */
+  function slot(now){
+    while (live.length >= MAX_VOICES){
+      var v = live.shift();
+      try { v.gain.cancelScheduledValues(now); v.gain.setTargetAtTime(0, now, 0.02); } catch (e) {}
+    }
   }
-  return { wake: wake, ping: ping, jit: jit };
+  /* 鐘の音。基音と1オクターブ上を重ねる。旋律を鳴らすので音程は数セントしか振らない */
+  function bell(freq, dur, vol, delay){
+    var c = wake(); if (!c) return;
+    var now = c.currentTime + (delay || 0);
+    slot(now);
+    dur = dur || 0.5;
+    var gain = c.createGain();
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(vol === undefined ? 0.18 : vol, now + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    var lp = c.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = Math.min(11000, freq * 7);
+    gain.connect(lp); lp.connect(master);
+    var f = jit(freq);
+    var o1 = c.createOscillator(), a1 = c.createGain();
+    o1.type = 'triangle'; o1.frequency.value = f; a1.gain.value = 0.72;
+    o1.connect(a1); a1.connect(gain);
+    var o2 = c.createOscillator(), a2 = c.createGain();
+    o2.type = 'sine'; o2.frequency.value = f * 2; a2.gain.value = 0.26;
+    o2.connect(a2); a2.connect(gain);
+    var v = { gain: gain };
+    live.push(v);
+    o1.start(now); o2.start(now);
+    o1.stop(now + dur + 0.06); o2.stop(now + dur + 0.06);
+    o1.onended = function(){ var i = live.indexOf(v); if (i >= 0) live.splice(i, 1); };
+    /* 5回に1回だけ上に光をひとつ足す。骨格は変えずに細部を振る */
+    if (Math.random() < 0.2){
+      var o3 = c.createOscillator(), a3 = c.createGain();
+      o3.type = 'sine'; o3.frequency.value = f * 4; a3.gain.value = 0.10;
+      o3.connect(a3); a3.connect(gain);
+      o3.start(now); o3.stop(now + Math.min(dur, 0.3));
+    }
+  }
+  return { wake: wake, bell: bell, jit: jit };
 })();
 
-var PENTA = [0, 2, 4, 7, 9];
-function pentaFreq(i, base){
-  base = base || 196;
-  var j = ((i % 5) + 5) % 5;
-  return base * Math.pow(2, Math.floor(i / 5) + PENTA[j] / 12);
+/* ---------- うた ---------- */
+/* きらきら星。押した順番に関わらず、押すたびに次の音が出る。
+   7つで1つのまとまりになっていて、7つ目だけ長く鳴る。 */
+var MEL = [0, 0, 7, 7, 9, 9, 7,
+           5, 5, 4, 4, 2, 2, 0,
+           7, 7, 5, 5, 4, 4, 2,
+           7, 7, 5, 5, 4, 4, 2,
+           0, 0, 7, 7, 9, 9, 7,
+           5, 5, 4, 4, 2, 2, 0];
+var BASE = 523.25;                 /* 小さいスピーカーでも出る高さに置く */
+var mi = 0, curNote = 0, lastNote = -99, chordN = 0;
+function melFreq(i){ return BASE * Math.pow(2, MEL[i] / 12); }
+function melDur(i){ return i % 7 === 6 ? 0.95 : 0.5; }
+/* 手のひらは指が5本ばらばらに降りてくる。90ms以内に続いた分は
+   うたを進めず、同じ音の和音にする。1回の押しで進むのは1音だけ */
+var CHORD = [1, 0.5, 1.4983, 2, 0.7492];
+function pressNote(t){
+  var fresh = (t - lastNote) > 0.09;
+  if (fresh){ curNote = mi; mi = (mi + 1) % MEL.length; chordN = 0; }
+  else chordN++;
+  lastNote = t;
+  return fresh;
 }
+function chordFreq(){ return melFreq(curNote) * CHORD[chordN % CHORD.length]; }
 
 /* ---------- 部品 ---------- */
 var MAX_PARTICLES = 90, MAX_RINGS = 12, MAX_KO = 4;
@@ -195,7 +238,7 @@ function makeKo(x, y){
     r: U * 0.36, up: 0, upv: 0, age: 0, span: rnd(16, 22),
     fade: 0, seed: rnd(0, 6.28),
     wx: rnd(-1, 1), wy: rnd(-1, 1), wt: 0,
-    gx: 0, gy: 0, hop: 0, hv: 0, tone: Math.floor(rnd(4, 12))
+    gx: 0, gy: 0, hop: 0, hv: 0, tone: [0, 4, 7, 12][Math.floor(rnd(0, 4))]
   };
 }
 function spawnKo(x, y){
@@ -204,7 +247,7 @@ function spawnKo(x, y){
   ko.push(k);
   addParticles(x, y, k.hue, 16);
   addRing(x, y, k.hue, U * 0.22);
-  Snd.ping(pentaFreq(k.tone + 5), 0.22, 'triangle', 0.15);
+  Snd.bell(BASE * 2 * Math.pow(2, k.tone / 12), 0.7, 0.15);
   return k;
 }
 function pickKo(x, y){
@@ -227,14 +270,21 @@ function popCell(b, t, order){
     popped++;
     addParticles(b.x, b.y, b.hue, 9);
     addRing(b.x, b.y, b.hue, U * 0.18);
-    if (order < 3) Snd.ping(pentaFreq(b.tone), 0.13, 'triangle', 0.17, order * 0.03);
+    if (order === 0){
+      if (pressNote(t)) Snd.bell(melFreq(curNote), melDur(curNote), 0.20);
+      else Snd.bell(chordFreq(), 0.42, 0.09);
+    } else if (order < 3){
+      /* 同じ押しでまとめて潰れた分は和音にする */
+      Snd.bell(melFreq(curNote) * (order === 1 ? 0.5 : 1.4983), 0.4, 0.08, order * 0.025);
+    }
     if (popped >= nextHidden && ko.length < MAX_KO){
       nextHidden = popped + 9 + Math.floor(rnd(0, 6));
       spawnKo(b.x, b.y);
     }
     return true;
   }
-  if (order === 0) Snd.ping(Snd.jit(126), 0.09, 'sine', 0.09);   /* ぺたんこを押しても返す */
+  /* ぺたんこも音を返す。うたは進めない。同じ押しの続きなら、いま鳴っている音に合わせる */
+  if (order === 0) Snd.bell(((t - lastNote) > 0.09 ? melFreq(mi) : melFreq(curNote)) / 2, 0.26, 0.07);
   addRing(b.x, b.y, b.hue, U * 0.14);
   return false;
 }
@@ -255,7 +305,7 @@ cv.addEventListener('pointerdown', function(e){
   if (k){                                    /* 住人は押されると跳ねて鳴く */
     k.hv = 9; k.up = Math.max(k.up, 0.2);
     addParticles(k.x, k.y - k.r * 0.4, k.hue, 7);
-    Snd.ping(pentaFreq(k.tone + 7), 0.18, 'triangle', 0.16);
+    Snd.bell(BASE * 2 * Math.pow(2, k.tone / 12), 0.55, 0.16);
     return;
   }
 
@@ -274,7 +324,7 @@ cv.addEventListener('pointerdown', function(e){
     hit++;
     if (hit > 12) break;
   }
-  if (order > 1) Snd.ping(pentaFreq(b.tone - 5), 0.16, 'sine', 0.10, 0.05);
+  if (order > 2) Snd.bell(melFreq(curNote) / 4, 0.6, 0.07, 0.05);
 }, { passive: false });
 
 cv.addEventListener('pointermove', function(e){
@@ -296,7 +346,7 @@ function endPointer(e){
   lastInput = performance.now();
   if (!p) return;
   if (p.cell && p.t > 0.25){                  /* 戻りきる音を小さく1つ */
-    Snd.ping(pentaFreq(p.cell.tone - 3), 0.14, 'sine', 0.08);
+    Snd.bell(BASE / 2, 0.3, 0.06);
     addRing(p.x, p.y, p.cell.hue, U * 0.3);
   }
 }
@@ -457,6 +507,7 @@ function frame(now){
   /* 誘い。3秒の無操作で、こちらから動く */
   if (stage >= 1){
     invite += dt;
+    if (now - lastInput > 5000){ mi = 0; chordN = 0; }   /* 手を止めたら、うたは頭から */
     if (stage >= 2) waveT += dt * 1.6;
     if (invite > 2.2){
       invite = 0;
