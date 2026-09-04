@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#efe8d9">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>ぷちぷち</title>
+<style>
+  :root{ color-scheme: light; }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    width:100%; height:100%; overflow:hidden;
+    background:#efe8d9;
+    overscroll-behavior:none; touch-action:none;
+    -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent;
+    font-family: system-ui, -apple-system, "Segoe UI",
+      "Hiragino Kaku Gothic ProN", "Hiragino Sans",
+      "BIZ UDPGothic", "Yu Gothic Medium", "Yu Gothic", YuGothic,
+      Meiryo, "Noto Sans JP", sans-serif;
+  }
+  #c{ position:fixed; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+  #home{
+    position:fixed; top:max(10px, env(safe-area-inset-top)); left:max(10px, env(safe-area-inset-left));
+    width:40px; height:40px; padding:0; border:0; border-radius:50%;
+    background:rgba(255,255,255,.42); backdrop-filter:blur(2px);
+    display:grid; place-items:center; cursor:pointer; z-index:5;
+    touch-action:none; -webkit-tap-highlight-color:transparent;
+  }
+  #home svg{ width:34px; height:34px; display:block; }
+  #home .trk{ fill:none; stroke:rgba(74,92,96,.22); stroke-width:2.5; }
+  #home .rng{
+    fill:none; stroke:#4a5c60; stroke-width:2.5; stroke-linecap:round;
+    stroke-dasharray:94.2; stroke-dashoffset:94.2;
+    transform:rotate(-90deg); transform-origin:50% 50%;
+    transition:stroke-dashoffset .04s linear;
+  }
+  #home.hold .rng{ stroke-dashoffset:0; transition:stroke-dashoffset .7s linear; }
+  #home .ico{ fill:#4a5c60; opacity:.72; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="home" aria-label="おもちゃばこに もどる">
+  <svg viewBox="0 0 36 36" aria-hidden="true">
+    <circle class="trk" cx="18" cy="18" r="15"/>
+    <circle class="rng" cx="18" cy="18" r="15"/>
+    <path class="ico" d="M18 9.4 10.2 16v9.1c0 .6.5 1.1 1.1 1.1h4.1v-5.3h5.2v5.3h4.1c.6 0 1.1-.5 1.1-1.1V16z"/>
+  </svg>
+</button>
+<script>
+(function(){
+'use strict';
+
+/* ぷちぷち。動詞は「押す」1つだけ。
+   連続量は接触時間（へこみの深さと広がる波）と同時接触数（潰れる範囲と和音）。
+   もう1回の型は巡り。潰した粒はしばらくすると自分でふくらんで戻る。
+   ひと工夫は「隠れているものが出る」。9〜14個ためると、いま潰した粒の跡から住人が出る。 */
+
+/* ---------- 画面 ---------- */
+var cv = document.getElementById('c'), g = cv.getContext('2d');
+var W = 0, H = 0, DPR = 1;
+var cols = 1, rows = 1, cw = 80, ch = 80, U = 80;
+var cells = [];
+
+var PAL = [12, 40, 96, 168, 196];
+var clamp = function(v, a, b){ return v < a ? a : (v > b ? b : v); };
+var rnd = function(a, b){ return a + Math.random() * (b - a); };
+
+function makeCells(){
+  var target = clamp(Math.min(W, H) * 0.19, 76, 108);
+  cols = Math.max(3, Math.round(W / target));
+  cw = W / cols;
+  rows = Math.max(3, Math.round(H / cw));
+  ch = H / rows;
+  U = Math.min(cw, ch);
+  var old = cells;
+  cells = [];
+  for (var r = 0; r < rows; r++){
+    for (var q = 0; q < cols; q++){
+      var i = r * cols + q;
+      var prev = old[i];
+      cells.push({
+        q: q, r: r,
+        x: (q + 0.5) * cw, y: (r + 0.5) * ch,
+        hue: PAL[(q * 3 + r * 2) % PAL.length],
+        tone: (q * 2 + r) % 13,
+        seed: rnd(0, 6.28),
+        p: prev ? prev.p : 1,          /* ふくらみ。1でまる、0でぺたんこ */
+        pv: prev ? prev.pv : 0,
+        flat: prev ? prev.flat : false,
+        back: prev ? prev.back : 0,    /* 戻ってくる時刻 */
+        dent: 0,                       /* 押された分のへこみ */
+        wob: 0
+      });
+    }
+  }
+}
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  makeCells();
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', resize);
+resize();
+
+/* ---------- 音 ---------- */
+var Snd = (function(){
+  var ctx = null, master = null, voices = 0;
+  var MAX_VOICES = 8;
+  function wake(){
+    if (!ctx){
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = 0.62;
+      var comp = ctx.createDynamicsCompressor();
+      master.connect(comp); comp.connect(ctx.destination);
+    }
+    if (ctx.state === 'suspended') ctx.resume();
+    return ctx;
+  }
+  var jit = function(v, pct){ pct = pct === undefined ? 0.045 : pct;
+    return v * (1 + (Math.random() * 2 - 1) * pct); };
+  function ping(freq, dur, type, vol, delay){
+    var c = wake();
+    if (!c || voices >= MAX_VOICES) return;
+    voices++;
+    var osc = c.createOscillator(), gain = c.createGain();
+    osc.type = type || 'sine';
+    osc.frequency.value = jit(freq);
+    var now = c.currentTime + (delay || 0);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(vol === undefined ? 0.16 : vol, now + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + (dur || 0.13));
+    osc.connect(gain); gain.connect(master);
+    osc.start(now); osc.stop(now + (dur || 0.13) + 0.02);
+    osc.onended = function(){ voices = Math.max(0, voices - 1); };
+  }
+  return { wake: wake, ping: ping, jit: jit };
+})();
+
+var PENTA = [0, 2, 4, 7, 9];
+function pentaFreq(i, base){
+  base = base || 196;
+  var j = ((i % 5) + 5) % 5;
+  return base * Math.pow(2, Math.floor(i / 5) + PENTA[j] / 12);
+}
+
+/* ---------- 部品 ---------- */
+var MAX_PARTICLES = 90, MAX_RINGS = 12, MAX_KO = 4;
+var particles = [], rings = [], ko = [];
+var popped = 0, nextHidden = 9 + Math.floor(rnd(0, 6)), lastKind = -1;
+var lastInput = performance.now(), invite = 0, waveT = 0;
+
+function breathe(t, seed, amp){ return 1 + Math.sin(t * 0.33 * 6.2832 + seed) * amp; }
+function springTo(o, target, dt, stiff, damp){
+  o.pv += ((target - o.p) * stiff - o.pv * damp) * dt;
+  o.p += o.pv * dt;
+}
+
+function addParticles(x, y, hue, n){
+  for (var i = 0; i < n; i++){
+    if (particles.length >= MAX_PARTICLES) particles.shift();
+    var a = rnd(0, 6.283), s = rnd(50, 300);
+    particles.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 80,
+                     r: rnd(2.5, 7), hue: hue, life: 1 });
+  }
+}
+function addRing(x, y, hue, r0){
+  if (rings.length >= MAX_RINGS) rings.shift();
+  rings.push({ x: x, y: y, r: r0, hue: hue, life: 1 });
+}
+
+function cellAt(x, y){
+  var q = clamp(Math.floor(x / cw), 0, cols - 1);
+  var r = clamp(Math.floor(y / ch), 0, rows - 1);
+  return cells[r * cols + q];
+}
+
+/* ---------- 住人 ---------- */
+function makeKo(x, y){
+  var kind = Math.floor(rnd(0, 4));
+  if (kind === lastKind) kind = (kind + 1 + Math.floor(rnd(0, 3))) % 4;
+  lastKind = kind;
+  var hues = [8, 44, 150, 344];
+  return {
+    x: x, y: y, kind: kind, hue: hues[kind],
+    r: U * 0.36, up: 0, upv: 0, age: 0, span: rnd(16, 22),
+    fade: 0, seed: rnd(0, 6.28),
+    wx: rnd(-1, 1), wy: rnd(-1, 1), wt: 0,
+    gx: 0, gy: 0, hop: 0, hv: 0, tone: Math.floor(rnd(4, 12))
+  };
+}
+function spawnKo(x, y){
+  if (ko.length >= MAX_KO) ko.shift();
+  var k = makeKo(x, y);
+  ko.push(k);
+  addParticles(x, y, k.hue, 16);
+  addRing(x, y, k.hue, U * 0.22);
+  Snd.ping(pentaFreq(k.tone + 5), 0.22, 'triangle', 0.15);
+  return k;
+}
+function pickKo(x, y){
+  for (var i = ko.length - 1; i >= 0; i--){
+    var k = ko[i];
+    var rr = Math.max(k.r, U * 0.34) * 1.45;
+    if ((x - k.x) * (x - k.x) + (y - k.y) * (y - k.y) < rr * rr) return k;
+  }
+  return null;
+}
+
+/* ---------- 潰す ---------- */
+function popCell(b, t, order){
+  b.dent = Math.max(b.dent, 0.55);          /* 押した最初のフレームで形が変わる */
+  b.wob = 1;
+  if (!b.flat){
+    b.flat = true;
+    b.pv = -13;
+    b.back = t + rnd(6, 10);                /* 巡り。放っておくと戻ってくる */
+    popped++;
+    addParticles(b.x, b.y, b.hue, 9);
+    addRing(b.x, b.y, b.hue, U * 0.18);
+    if (order < 3) Snd.ping(pentaFreq(b.tone), 0.13, 'triangle', 0.17, order * 0.03);
+    if (popped >= nextHidden && ko.length < MAX_KO){
+      nextHidden = popped + 9 + Math.floor(rnd(0, 6));
+      spawnKo(b.x, b.y);
+    }
+    return true;
+  }
+  if (order === 0) Snd.ping(Snd.jit(126), 0.09, 'sine', 0.09);   /* ぺたんこを押しても返す */
+  addRing(b.x, b.y, b.hue, U * 0.14);
+  return false;
+}
+
+/* ---------- 入力。全ポインターを保持する ---------- */
+var pointers = new Map();
+
+cv.addEventListener('pointerdown', function(e){
+  e.preventDefault();
+  lastInput = performance.now();
+  Snd.wake();
+  var t = performance.now() / 1000;
+  var x = e.clientX, y = e.clientY;
+  pointers.set(e.pointerId, { x: x, y: y, t: 0, cell: null });
+  var np = pointers.size;                    /* 接触面の大きさは見ない。同時に降りた数で見る */
+
+  var k = pickKo(x, y);
+  if (k){                                    /* 住人は押されると跳ねて鳴く */
+    k.hv = 9; k.up = Math.max(k.up, 0.2);
+    addParticles(k.x, k.y - k.r * 0.4, k.hue, 7);
+    Snd.ping(pentaFreq(k.tone + 7), 0.18, 'triangle', 0.16);
+    return;
+  }
+
+  var b = cellAt(x, y);
+  pointers.get(e.pointerId).cell = b;
+  var order = 0, hit = 1;
+  if (popCell(b, t, 0)) order++;                       /* 触った所は指1本でも必ず潰れる */
+  /* 手のひらは同時に降りたポインタの数で見る。接触面の大きさは見ない */
+  var reach = np < 3 ? 0 : Math.min(cw, ch) * (0.6 + 0.45 * (np - 2));
+  for (var i = 0; i < cells.length; i++){
+    var c = cells[i];
+    if (c === b) continue;
+    var dx = c.x - x, dy = c.y - y;
+    if (dx * dx + dy * dy > reach * reach) continue;
+    if (popCell(c, t, order)) order++;
+    hit++;
+    if (hit > 12) break;
+  }
+  if (order > 1) Snd.ping(pentaFreq(b.tone - 5), 0.16, 'sine', 0.10, 0.05);
+}, { passive: false });
+
+cv.addEventListener('pointermove', function(e){
+  var p = pointers.get(e.pointerId);
+  if (!p) return;
+  lastInput = performance.now();
+  p.x = e.clientX; p.y = e.clientY;
+  var b = cellAt(e.clientX, e.clientY);
+  if (b !== p.cell){                          /* なぞった先はへこむだけ。潰すのは押した所だけ */
+    p.cell = b;
+    b.dent = Math.max(b.dent, 0.34);
+    b.wob = Math.max(b.wob, 0.5);
+  }
+}, { passive: false });
+
+function endPointer(e){
+  var p = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  lastInput = performance.now();
+  if (!p) return;
+  if (p.cell && p.t > 0.25){                  /* 戻りきる音を小さく1つ */
+    Snd.ping(pentaFreq(p.cell.tone - 3), 0.14, 'sine', 0.08);
+    addRing(p.x, p.y, p.cell.hue, U * 0.3);
+  }
+}
+cv.addEventListener('pointerup', endPointer);
+cv.addEventListener('pointercancel', endPointer);
+cv.addEventListener('pointerleave', endPointer);
+cv.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+
+/* ---------- もどる（700ms 長押し） ---------- */
+var home = document.getElementById('home'), ht = null;
+function hStart(e){
+  e.preventDefault(); e.stopPropagation();
+  home.classList.add('hold');
+  ht = setTimeout(function(){ location.assign('../../'); }, 700);
+}
+function hEnd(e){
+  if (e) e.stopPropagation();
+  home.classList.remove('hold');
+  if (ht){ clearTimeout(ht); ht = null; }
+}
+home.addEventListener('pointerdown', hStart, { passive: false });
+['pointerup','pointerleave','pointercancel'].forEach(function(k){
+  home.addEventListener(k, hEnd);
+});
+
+/* ---------- 誘い。言葉を出さない ---------- */
+function idleStage(now){
+  var s = (now - lastInput) / 1000;
+  return s < 3 ? 0 : (s < 8 ? 1 : (s < 15 ? 2 : 3));
+}
+
+/* ---------- 描く ---------- */
+function drawCell(b, t){
+  var bs = breathe(t, b.seed, 0.018);
+  var q = clamp(b.p * bs - b.dent * 0.85, -0.42, 1.45);
+  var rad = Math.min(cw, ch) * 0.42;
+  var seat = rad * 0.98;
+
+  /* くぼみ（台）。ぺたんこでも場所が読める */
+  g.fillStyle = 'hsl(' + b.hue + ' 26% 83%)';
+  g.beginPath(); g.arc(b.x, b.y, seat, 0, 6.2832); g.fill();
+
+  if (q <= 0.06){
+    /* しわ。色の濃度と形だけで、潰れたことが分かる */
+    g.strokeStyle = 'hsl(' + b.hue + ' 28% ' + (63 + q * 20) + '%)';
+    g.lineWidth = Math.max(2, rad * 0.115);
+    g.lineCap = 'round';
+    var d = seat * (0.44 - q * 0.5);
+    g.beginPath();
+    g.arc(b.x, b.y + rad * 0.10, d, 3.5, 5.9);
+    g.stroke();
+    g.beginPath();
+    g.arc(b.x, b.y - rad * 0.16, d * 0.72, 0.5, 2.7);
+    g.stroke();
+    return;
+  }
+
+  var wob = b.wob > 0 ? Math.sin(t * 30 + b.seed) * 0.06 * b.wob : 0;
+  var rx = rad * (0.60 + 0.40 * q) * (1 + wob);
+  var ry = rad * (0.60 + 0.40 * q) * (1 - wob);
+
+  g.fillStyle = 'hsl(' + b.hue + ' 50% ' + (84 - q * 6) + '%)';
+  g.strokeStyle = 'hsl(' + b.hue + ' 42% 56%)';
+  g.lineWidth = Math.max(2, rad * 0.075);
+  g.beginPath(); g.ellipse(b.x, b.y, rx, ry, 0, 0, 6.2832); g.fill(); g.stroke();
+
+  g.globalAlpha = 0.5;
+  g.fillStyle = 'hsl(' + b.hue + ' 60% 96%)';
+  g.beginPath();
+  g.ellipse(b.x - rx * 0.26, b.y - ry * 0.30, rx * 0.34, ry * 0.22, -0.6, 0, 6.2832);
+  g.fill();
+  g.globalAlpha = 1;
+}
+
+function drawKo(k, t){
+  var bs = breathe(t, k.seed, 0.045);
+  var r = k.r * k.up * bs;
+  if (r < 1) return;
+  var y = k.y - k.hop;
+  g.globalAlpha = clamp(1 - k.fade, 0, 1);
+
+  g.fillStyle = 'rgba(70,58,44,0.12)';
+  g.beginPath(); g.ellipse(k.x, k.y + r * 0.92, r * 0.82, r * 0.20, 0, 0, 6.2832); g.fill();
+
+  var sq = 1 + clamp(k.hv, -3, 3) * 0.02;
+  g.fillStyle = 'hsl(' + k.hue + ' 58% 66%)';
+  g.strokeStyle = 'hsl(' + k.hue + ' 48% 40%)';
+  g.lineWidth = Math.max(2, r * 0.14);
+
+  if (k.kind === 0){
+    g.beginPath(); g.ellipse(k.x, y, r * 0.98 / sq, r * 0.86 * sq, 0, 0, 6.2832);
+    g.fill(); g.stroke();
+    g.fillStyle = 'hsl(' + k.hue + ' 40% 30%)';
+    g.beginPath(); g.arc(k.x - r * 0.34, y + r * 0.18, r * 0.15, 0, 6.2832); g.fill();
+    g.beginPath(); g.arc(k.x + r * 0.36, y + r * 0.10, r * 0.13, 0, 6.2832); g.fill();
+    g.beginPath(); g.arc(k.x + r * 0.04, y + r * 0.44, r * 0.12, 0, 6.2832); g.fill();
+  } else if (k.kind === 1){
+    g.beginPath(); g.ellipse(k.x, y + r * 0.10, r * 0.86 / sq, r * 0.78 * sq, 0, 0, 6.2832);
+    g.fill(); g.stroke();
+    g.beginPath(); g.ellipse(k.x - r * 0.34, y - r * 0.78, r * 0.20, r * 0.52, -0.2, 0, 6.2832);
+    g.fill(); g.stroke();
+    g.beginPath(); g.ellipse(k.x + r * 0.34, y - r * 0.78, r * 0.20, r * 0.52, 0.2, 0, 6.2832);
+    g.fill(); g.stroke();
+  } else if (k.kind === 2){
+    g.beginPath(); g.ellipse(k.x, y, r * 0.92 / sq, r * 0.90 * sq, 0, 0, 6.2832);
+    g.fill(); g.stroke();
+    g.beginPath();
+    g.moveTo(k.x + r * 0.80, y + r * 0.02);
+    g.lineTo(k.x + r * 1.24, y + r * 0.22);
+    g.lineTo(k.x + r * 0.78, y + r * 0.34);
+    g.closePath();
+    g.fillStyle = 'hsl(28 66% 58%)'; g.fill();
+  } else {
+    g.beginPath(); g.ellipse(k.x, y + r * 0.06, r * 0.94 / sq, r * 0.84 * sq, 0, 0, 6.2832);
+    g.fill(); g.stroke();
+    g.beginPath();
+    g.moveTo(k.x, y - r * 0.74);
+    g.quadraticCurveTo(k.x + r * 0.52, y - r * 1.28, k.x + r * 0.06, y - r * 1.40);
+    g.lineWidth = Math.max(2, r * 0.17);
+    g.stroke();
+  }
+
+  /* 指を見る */
+  var ex = k.x + k.gx, ey = y - r * 0.10 + k.gy;
+  g.fillStyle = 'hsl(48 42% 96%)';
+  g.beginPath(); g.arc(ex - r * 0.27, ey, r * 0.20, 0, 6.2832); g.fill();
+  g.beginPath(); g.arc(ex + r * 0.27, ey, r * 0.20, 0, 6.2832); g.fill();
+  g.fillStyle = '#2b2530';
+  g.beginPath(); g.arc(ex - r * 0.27 + k.gx * 0.3, ey + k.gy * 0.3, r * 0.115, 0, 6.2832); g.fill();
+  g.beginPath(); g.arc(ex + r * 0.27 + k.gx * 0.3, ey + k.gy * 0.3, r * 0.115, 0, 6.2832); g.fill();
+  g.globalAlpha = 1;
+}
+
+/* ---------- ループ ---------- */
+var prev = performance.now();
+function frame(now){
+  var dt = Math.min(0.033, (now - prev) / 1000); prev = now;
+  var t = now / 1000;
+  var stage = idleStage(now);
+  var i, k, b;
+
+  pointers.forEach(function(p){
+    p.t += dt;
+    if (p.cell){
+      p.cell.dent = Math.max(p.cell.dent, 0.5 + Math.min(0.28, p.t * 0.30));
+      var reach = Math.min(cw, ch) * (0.7 + Math.min(1.5, p.t * 1.1));
+      for (var j = 0; j < cells.length; j++){       /* 接触時間で波が外へ広がる */
+        var c = cells[j];
+        var dx = c.x - p.x, dy = c.y - p.y;
+        var d = Math.sqrt(dx * dx + dy * dy);
+        if (d < reach && d > Math.min(cw, ch) * 0.5){
+          c.dent = Math.max(c.dent, 0.20 * (1 - d / reach));
+        }
+      }
+    }
+  });
+
+  /* 誘い。3秒の無操作で、こちらから動く */
+  if (stage >= 1){
+    invite += dt;
+    if (stage >= 2) waveT += dt * 1.6;
+    if (invite > 2.2){
+      invite = 0;
+      var puffy = [];
+      for (i = 0; i < cells.length; i++) if (!cells[i].flat) puffy.push(cells[i]);
+      if (puffy.length){
+        var pick = puffy[Math.floor(Math.random() * puffy.length)];
+        pick.pv = 5.5; pick.wob = 1;
+      }
+      if (stage >= 3 && ko.length < 2){
+        var any = puffy.length ? puffy[Math.floor(Math.random() * puffy.length)] : cells[0];
+        spawnKo(any.x, any.y);
+      }
+    }
+  } else { invite = 0; waveT = 0; }
+
+  for (i = 0; i < cells.length; i++){
+    b = cells[i];
+    if (b.flat && t > b.back){ b.flat = false; b.pv = 1.2; }
+    if (b.flat) springTo(b, 0, dt, 250, 15);
+    else springTo(b, 1, dt, 130, 11);
+    b.dent = Math.max(0, b.dent - dt * 4.2);
+    b.wob = Math.max(0, b.wob - dt * 2.4);
+    if (stage >= 2 && !b.flat){                     /* 波がゆっくり渡っていく */
+      var ph = waveT - (b.q + b.r) * 0.42;
+      if (ph > 0 && ph < 3.14) b.dent = Math.max(b.dent, Math.sin(ph) * 0.16);
+    }
+  }
+
+  for (i = ko.length - 1; i >= 0; i--){
+    k = ko[i];
+    k.age += dt;
+    k.up += (1 - k.up) * dt * 3.4;
+    k.hv += (0 - k.hop) * 90 * dt - k.hv * 5.5 * dt;
+    k.hop += k.hv * dt * 6;
+    k.wt += dt;
+    if (k.wt > 2.2){ k.wt = 0; k.wx = rnd(-1, 1); k.wy = rnd(-1, 1); }
+    k.x = clamp(k.x + k.wx * dt * U * 0.5, k.r, Math.max(k.r, W - k.r));
+    k.y = clamp(k.y + k.wy * dt * U * 0.5, k.r, Math.max(k.r, H - k.r));
+    var near = null, nd = 1e9;
+    pointers.forEach(function(p){
+      var d = Math.hypot(p.x - k.x, p.y - k.y);
+      if (d < nd){ nd = d; near = p; }
+    });
+    var tx = 0, ty = 0;
+    if (near){
+      var ddx = near.x - k.x, ddy = near.y - k.y, dd = Math.hypot(ddx, ddy) || 1;
+      var mm = Math.min(dd * 0.3, k.r * 0.2) / dd;
+      tx = ddx * mm; ty = ddy * mm;
+    }
+    k.gx += (tx - k.gx) * dt * 4;
+    k.gy += (ty - k.gy) * dt * 4;
+    if (k.age > k.span){                            /* 巡り。しばらくすると潜っていく */
+      k.fade += dt * 0.7;
+      k.r = Math.max(0, k.r - U * dt * 0.18);
+      if (k.fade >= 1) ko.splice(i, 1);
+    }
+  }
+
+  for (i = rings.length - 1; i >= 0; i--){
+    var rg = rings[i];
+    rg.r += U * 2.4 * dt; rg.life -= dt * 1.7;
+    if (rg.life <= 0) rings.splice(i, 1);
+  }
+  for (i = particles.length - 1; i >= 0; i--){
+    var pt = particles[i];
+    pt.vy += 820 * dt; pt.x += pt.vx * dt; pt.y += pt.vy * dt;
+    pt.life -= dt * 1.25;
+    if (pt.life <= 0) particles.splice(i, 1);
+  }
+
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = '#efe8d9'; g.fillRect(0, 0, W, H);
+  for (i = 0; i < cells.length; i++) drawCell(cells[i], t);
+  for (i = 0; i < rings.length; i++){
+    var r2 = rings[i];
+    g.globalAlpha = clamp(r2.life, 0, 1) * 0.6;
+    g.strokeStyle = 'hsl(' + r2.hue + ' 55% 58%)';
+    g.lineWidth = Math.max(2, U * 0.08 * r2.life);
+    g.beginPath(); g.arc(r2.x, r2.y, r2.r, 0, 6.2832); g.stroke();
+  }
+  g.globalAlpha = 1;
+  for (i = 0; i < ko.length; i++) drawKo(ko[i], t);
+  for (i = 0; i < particles.length; i++){
+    var p2 = particles[i];
+    g.globalAlpha = clamp(p2.life, 0, 1);
+    g.fillStyle = 'hsl(' + p2.hue + ' 58% 72%)';
+    g.beginPath(); g.arc(p2.x, p2.y, p2.r, 0, 6.2832); g.fill();
+  }
+  g.globalAlpha = 1;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
