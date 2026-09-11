@@ -8,6 +8,14 @@
   "photo": "papa.jpg",
   "games": [
     {
+      "slug": "kumori-garasu",
+      "title": "くもりガラス",
+      "date": "2026-09-11",
+      "bg": "#d7e4e7",
+      "icon": "<svg viewBox=\"0 0 120 120\" aria-hidden=\"true\"><circle cx=\"96\" cy=\"24\" r=\"14\" fill=\"#f0eecb\" opacity=\".6\"/><path d=\"M0 78c15-9 29-7 42-2s27 7 41 3 24-7 37-3v44H0z\" fill=\"#b9d2ab\" opacity=\".55\"/><path d=\"M0 95c17-6 31-4 45 1s29 5 45 0 20-4 30-2v26H0z\" fill=\"#9cc48c\" opacity=\".6\"/><path d=\"M18 34c8-8 22-11 38-11 18 0 33 2 42 9 9 8 8 22 1 32-8 11-24 16-42 16-17 0-32-4-40-12-9-9-8-25 1-34z\" fill=\"#2c3c48\"/><path d=\"M18 68c10 6 24 9 40 9 16 0 30-3 39-9-2 6-6 10-11 13H29c-5-3-9-7-11-13z\" fill=\"#22333d\"/><circle cx=\"36\" cy=\"36\" r=\"2.4\" fill=\"#f5efd2\"/><circle cx=\"57\" cy=\"30\" r=\"1.8\" fill=\"#f5efd2\"/><circle cx=\"78\" cy=\"38\" r=\"2.2\" fill=\"#f5efd2\"/><circle cx=\"90\" cy=\"52\" r=\"1.7\" fill=\"#f5efd2\"/><circle cx=\"30\" cy=\"54\" r=\"1.7\" fill=\"#f5efd2\"/><circle cx=\"66\" cy=\"55\" r=\"7\" fill=\"#f2e79a\" opacity=\".38\"/><circle cx=\"66\" cy=\"55\" r=\"3.1\" fill=\"#faf3b4\"/><circle cx=\"44\" cy=\"63\" r=\"5.6\" fill=\"#f2e79a\" opacity=\".34\"/><circle cx=\"44\" cy=\"63\" r=\"2.5\" fill=\"#faf3b4\"/><path d=\"M22 76 27 65l7 6z\" fill=\"#cf8238\"/><path d=\"M46 76 44 64l-7 5z\" fill=\"#cf8238\"/><circle cx=\"34\" cy=\"84\" r=\"14\" fill=\"#df9245\"/><ellipse cx=\"34\" cy=\"89\" rx=\"8.4\" ry=\"7\" fill=\"#f6dcb0\"/><circle cx=\"29\" cy=\"81\" r=\"2.1\" fill=\"#3b352d\"/><circle cx=\"39\" cy=\"81\" r=\"2.1\" fill=\"#3b352d\"/><ellipse cx=\"34\" cy=\"86.5\" rx=\"1.7\" ry=\"1.3\" fill=\"#b9705a\"/><ellipse cx=\"104\" cy=\"72\" rx=\"4\" ry=\"5.4\" fill=\"#eef7fa\" opacity=\".8\"/><ellipse cx=\"96\" cy=\"94\" rx=\"3.1\" ry=\"4.2\" fill=\"#eef7fa\" opacity=\".75\"/></svg>",
+      "twist": "つよさの端で変わる"
+    },
+    {
       "slug": "puchipuchi",
       "title": "ぷちぷち",
       "date": "2026-09-04",
