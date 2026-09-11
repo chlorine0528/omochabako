@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#dbe5e8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>くもりガラス</title>
+<style>
+  :root{ color-scheme: light; }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    width:100%; height:100%; overflow:hidden;
+    background:#dbe5e8;
+    overscroll-behavior:none; touch-action:none;
+    -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent;
+    font-family: system-ui, -apple-system, "Segoe UI",
+      "Hiragino Kaku Gothic ProN", "Hiragino Sans",
+      "BIZ UDPGothic", "Yu Gothic Medium", "Yu Gothic", YuGothic,
+      Meiryo, "Noto Sans JP", sans-serif;
+  }
+  #c{ position:fixed; inset:0; width:100%; height:100%; display:block; }
+  #home{
+    position:fixed; top:max(10px, env(safe-area-inset-top)); left:max(10px, env(safe-area-inset-left));
+    width:40px; height:40px; padding:0; border:0; border-radius:50%;
+    background:rgba(255,255,255,.42); backdrop-filter:blur(2px);
+    display:grid; place-items:center; cursor:pointer; z-index:5;
+    touch-action:none; -webkit-tap-highlight-color:transparent;
+  }
+  #home svg{ width:34px; height:34px; display:block; }
+  #home .trk{ fill:none; stroke:rgba(74,92,96,.22); stroke-width:2.5; }
+  #home .rng{
+    fill:none; stroke:#4a5c60; stroke-width:2.5; stroke-linecap:round;
+    stroke-dasharray:94.2; stroke-dashoffset:94.2;
+    transform:rotate(-90deg); transform-origin:50% 50%;
+    transition:stroke-dashoffset .04s linear;
+  }
+  #home.hold .rng{ stroke-dashoffset:0; transition:stroke-dashoffset .7s linear; }
+  #home .ico{ fill:#4a5c60; opacity:.72; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="home" aria-label="おもちゃばこに もどる">
+  <svg viewBox="0 0 36 36" aria-hidden="true">
+    <circle class="trk" cx="18" cy="18" r="15"/>
+    <circle class="rng" cx="18" cy="18" r="15"/>
+    <path class="ico" d="M18 9.4 10.2 16v9.1c0 .6.5 1.1 1.1 1.1h4.1v-5.3h5.2v5.3h4.1c.6 0 1.1-.5 1.1-1.1V16z"/>
+  </svg>
+</button>
+<script>
+/* くもりガラス。動詞は「こする」1つだけ。
+   もう1回の型は巡り（手を止めると曇りが戻る）と住人（窓の外の生きもの）。
+   ひと工夫は「つよさの端で変わる」。
+   ゆっくり動かした所だけ、曇りの下から よるの景色 が透ける。
+   速く動かすと しずく が散って、よるの層は昼へ戻る。
+   どちらも指の下で起きる。 */
+'use strict';
+
+var cv = document.getElementById('c');
+var g = cv.getContext('2d');
+var W = 0, H = 0, DPR = 1, U = 100;
+
+/* 曇りとよるの層は半分の解像度で持つ。にじむほうが曇りらしい */
+var SC = 0.5;
+var fogCv = document.createElement('canvas'), fogG = fogCv.getContext('2d');
+var mskCv = document.createElement('canvas'), mskG = mskCv.getContext('2d');
+var nitCv = document.createElement('canvas'), nitG = nitCv.getContext('2d');
+var dayCv = document.createElement('canvas'), dayG = dayCv.getContext('2d');
+var drkCv = document.createElement('canvas'), drkG = drkCv.getContext('2d');
+
+var FOG = 'rgba(222,233,237,';
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  U = Math.max(46, Math.min(W, H) * 0.12);
+
+  var sw = Math.max(2, Math.round(W * SC)), sh = Math.max(2, Math.round(H * SC));
+  [fogCv, mskCv, nitCv].forEach(function(k){ k.width = sw; k.height = sh; });
+  dayCv.width = sw; dayCv.height = sh;
+  drkCv.width = sw; drkCv.height = sh;
+
+  fogG.setTransform(1,0,0,1,0,0);
+  fogG.globalCompositeOperation = 'source-over';
+  fogG.fillStyle = FOG + '0.88)';
+  fogG.fillRect(0, 0, sw, sh);
+  mskG.setTransform(1,0,0,1,0,0);
+  mskG.clearRect(0, 0, sw, sh);
+
+  paintScene(dayG, sw, sh, false);
+  paintScene(drkG, sw, sh, true);
+}
+
+/* 窓の外。昼と よる を1枚ずつ焼いておく */
+function paintScene(x, w, h, night){
+  x.setTransform(1,0,0,1,0,0);
+  x.globalCompositeOperation = 'source-over';
+  x.clearRect(0, 0, w, h);
+  var sky = x.createLinearGradient(0, 0, 0, h);
+  if (night){
+    sky.addColorStop(0, '#202c3a'); sky.addColorStop(0.55, '#2b3b47'); sky.addColorStop(1, '#35464e');
+  } else {
+    sky.addColorStop(0, '#8fc0d6'); sky.addColorStop(0.5, '#bcd9d5'); sky.addColorStop(1, '#dfe7bc');
+  }
+  x.fillStyle = sky; x.fillRect(0, 0, w, h);
+
+  if (night){
+    /* 星。位置は毎回同じにして骨格を保つ */
+    var s = 7919;
+    for (var i = 0; i < 46; i++){
+      s = (s * 1103515245 + 12345) % 2147483648;
+      var sx = (s / 2147483648) * w;
+      s = (s * 1103515245 + 12345) % 2147483648;
+      var sy = (s / 2147483648) * h * 0.62;
+      s = (s * 1103515245 + 12345) % 2147483648;
+      var sr = 0.5 + (s / 2147483648) * 1.1;
+      x.fillStyle = 'rgba(244,238,214,' + (0.45 + sr * 0.3) + ')';
+      x.beginPath(); x.arc(sx, sy, sr, 0, 6.2832); x.fill();
+    }
+    x.fillStyle = '#ece5c8';
+    x.beginPath(); x.arc(w * 0.74, h * 0.16, Math.min(w, h) * 0.075, 0, 6.2832); x.fill();
+    x.globalCompositeOperation = 'destination-out';
+    x.beginPath(); x.arc(w * 0.70, h * 0.135, Math.min(w, h) * 0.066, 0, 6.2832); x.fill();
+    x.globalCompositeOperation = 'source-over';
+  } else {
+    x.fillStyle = '#f6dc95';
+    x.beginPath(); x.arc(w * 0.76, h * 0.15, Math.min(w, h) * 0.085, 0, 6.2832); x.fill();
+    x.fillStyle = 'rgba(246,220,149,0.3)';
+    x.beginPath(); x.arc(w * 0.76, h * 0.15, Math.min(w, h) * 0.13, 0, 6.2832); x.fill();
+    var cl = [[0.2, 0.12, 0.9], [0.46, 0.26, 0.62], [0.16, 0.36, 0.5]];
+    for (var q = 0; q < cl.length; q++){
+      var cx0 = w * cl[q][0], cy0 = h * cl[q][1], cr = Math.min(w, h) * 0.075 * cl[q][2];
+      x.fillStyle = 'rgba(249,252,250,0.82)';
+      x.beginPath(); x.arc(cx0, cy0, cr, 0, 6.2832); x.fill();
+      x.beginPath(); x.arc(cx0 + cr * 0.95, cy0 + cr * 0.16, cr * 0.78, 0, 6.2832); x.fill();
+      x.beginPath(); x.arc(cx0 - cr * 0.9, cy0 + cr * 0.2, cr * 0.66, 0, 6.2832); x.fill();
+    }
+  }
+
+  /* おか を3枚。奥ほど淡い */
+  var hills = night
+    ? ['#2e4453', '#273b46', '#16232b']
+    : ['#7fb463', '#5d9b47', '#3f7d3c'];
+  for (var k = 0; k < 3; k++){
+    var base = h * (0.50 + k * 0.15);
+    var amp = h * (0.07 - k * 0.012);
+    x.fillStyle = hills[k];
+    x.beginPath(); x.moveTo(0, h);
+    x.lineTo(0, base);
+    for (var px = 0; px <= w; px += 6){
+      x.lineTo(px, base + Math.sin(px / (w * 0.19) + k * 2.1) * amp
+                        + Math.sin(px / (w * 0.07) + k) * amp * 0.28);
+    }
+    x.lineTo(w, h); x.closePath(); x.fill();
+  }
+
+  /* 木 */
+  var tx = [0.12, 0.3, 0.88];
+  for (var t = 0; t < tx.length; t++){
+    var bx = w * tx[t], by = h * (0.72 + (t % 2) * 0.05), tr = Math.min(w, h) * (0.05 + (t % 2) * 0.012);
+    x.fillStyle = night ? '#16232b' : '#6b4f38';
+    x.fillRect(bx - tr * 0.14, by - tr * 0.2, tr * 0.28, tr * 1.1);
+    x.fillStyle = night ? '#243a3c' : '#3d7f3f';
+    x.beginPath(); x.arc(bx, by - tr * 0.5, tr, 0, 6.2832); x.fill();
+    x.beginPath(); x.arc(bx - tr * 0.7, by - tr * 0.1, tr * 0.7, 0, 6.2832); x.fill();
+    x.beginPath(); x.arc(bx + tr * 0.7, by - tr * 0.15, tr * 0.72, 0, 6.2832); x.fill();
+  }
+}
+
+/* ---------- 音 ---------- */
+var Snd = {
+  ctx: null, out: null, noise: null, live: 0,
+  wake: function(){
+    if (!this.ctx){
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      this.ctx = new AC();
+      var comp = this.ctx.createDynamicsCompressor();
+      var mg = this.ctx.createGain(); mg.gain.value = 0.85;
+      comp.connect(mg); mg.connect(this.ctx.destination);
+      this.out = comp;
+      var len = Math.floor(this.ctx.sampleRate * 1.4);
+      this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+      var d = this.noise.getChannelData(0);
+      for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    }
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+    return this.ctx;
+  },
+  /* しずく。押した瞬間に必ず1つ返す */
+  drop: function(f, vol){
+    var c = this.wake(); if (!c || this.live > 13) return;
+    var o = c.createOscillator(), gn = c.createGain();
+    o.type = 'sine';
+    var p = f * (0.96 + Math.random() * 0.08);
+    var t = c.currentTime;
+    o.frequency.setValueAtTime(p * 1.7, t);
+    o.frequency.exponentialRampToValueAtTime(p, t + 0.09);
+    gn.gain.setValueAtTime(0.0001, t);
+    gn.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+    o.connect(gn); gn.connect(this.out);
+    o.start(t); o.stop(t + 0.24);
+    this.live++;
+    var s = this;
+    o.onended = function(){ s.live--; };
+  },
+  /* よる が透けた合図。小さく、ほめない */
+  chime: function(f){
+    var c = this.wake(); if (!c || this.live > 13) return;
+    var o = c.createOscillator(), gn = c.createGain();
+    o.type = 'triangle';
+    var t = c.currentTime;
+    o.frequency.setValueAtTime(f * (0.97 + Math.random() * 0.06), t);
+    gn.gain.setValueAtTime(0.0001, t);
+    gn.gain.exponentialRampToValueAtTime(0.05, t + 0.03);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
+    o.connect(gn); gn.connect(this.out);
+    o.start(t); o.stop(t + 0.82);
+    this.live++;
+    var s = this;
+    o.onended = function(){ s.live--; };
+  },
+  /* こすり音。帯域と音量が速さに追いつく。止めたら止まる */
+  rub: function(){
+    var c = this.wake(); if (!c) return null;
+    var src = c.createBufferSource();
+    src.buffer = this.noise; src.loop = true;
+    var bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.1;
+    bp.frequency.value = 700;
+    var gn = c.createGain(); gn.gain.value = 0;
+    src.connect(bp); bp.connect(gn); gn.connect(this.out);
+    try { src.start(); } catch (e) {}
+    return {
+      set: function(v){
+        var k = Math.min(1, v / 1300);
+        var t = c.currentTime;
+        bp.frequency.setTargetAtTime(480 + k * 3600, t, 0.02);
+        gn.gain.setTargetAtTime(k * 0.17, t, 0.025);
+      },
+      stop: function(){
+        var t = c.currentTime;
+        gn.gain.setTargetAtTime(0, t, 0.012);
+        try { src.stop(t + 0.09); } catch (e) {}
+      }
+    };
+  }
+};
+
+/* ---------- 指 ---------- */
+var pts = {};       /* pointerId ごとに保持する。1本に限定しない */
+var nPts = 0;
+var lastInput = 0;  /* 無操作の誘い用 */
+var idleWave = 0;
+
+function addPoint(id, x, y){
+  pts[id] = { x: x, y: y, px: x, py: y, v: 0, voice: Snd.rub() };
+  nPts++;
+  lastInput = performance.now();
+}
+function dropPoint(id){
+  var p = pts[id]; if (!p) return;
+  if (p.voice) p.voice.stop();
+  delete pts[id]; nPts--;
+  lastInput = performance.now();
+}
+
+/* 曇りを削る。判定は見た目より一回り大きく取る */
+function wipe(x, y, r, a){
+  var sx = x * SC, sy = y * SC, sr = Math.max(2, r * SC);
+  var gd = fogG.createRadialGradient(sx, sy, sr * 0.15, sx, sy, sr);
+  gd.addColorStop(0, 'rgba(0,0,0,' + a + ')');
+  gd.addColorStop(0.55, 'rgba(0,0,0,' + (a * 0.8) + ')');
+  gd.addColorStop(1, 'rgba(0,0,0,0)');
+  fogG.globalCompositeOperation = 'destination-out';
+  fogG.fillStyle = gd;
+  fogG.beginPath(); fogG.arc(sx, sy, sr, 0, 6.2832); fogG.fill();
+  fogG.globalCompositeOperation = 'source-over';
+}
+/* よる の層を指の下に置く、または昼へ戻す */
+function paintNight(x, y, r, a, erase){
+  var sx = x * SC, sy = y * SC, sr = Math.max(2, r * SC);
+  var gd = mskG.createRadialGradient(sx, sy, sr * 0.1, sx, sy, sr);
+  gd.addColorStop(0, 'rgba(40,70,110,' + a + ')');
+  gd.addColorStop(1, 'rgba(40,70,110,0)');
+  mskG.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
+  mskG.fillStyle = gd;
+  mskG.beginPath(); mskG.arc(sx, sy, sr, 0, 6.2832); mskG.fill();
+  mskG.globalCompositeOperation = 'source-over';
+}
+
+/* ---------- しずく ---------- */
+var MAX_DROPS = 40;
+var drops = [];
+function addDrop(x, y, r){
+  drops.push({ x: x, y: y, r: r, vy: 6 + Math.random() * 18, vx: 0, life: 1 });
+  while (drops.length > MAX_DROPS) drops.shift();
+}
+
+/* ---------- ほたる。よる の層にだけ現れる ---------- */
+var FLIES = 18;
+var flies = [];
+function fliesInit(){
+  flies.length = 0;
+  for (var i = 0; i < FLIES; i++){
+    flies.push({ x: Math.random(), y: 0.3 + Math.random() * 0.62,
+                 vx: (Math.random() - 0.5) * 0.02, vy: (Math.random() - 0.5) * 0.016,
+                 ph: Math.random() * 6.28, sp: 0.8 + Math.random() * 1.5 });
+  }
+}
+function fliesStep(dt, now){
+  for (var i = 0; i < flies.length; i++){
+    var f = flies[i];
+    f.x += f.vx * dt + Math.sin(now / 900 + f.ph) * 0.0006;
+    f.y += f.vy * dt + Math.cos(now / 1100 + f.ph) * 0.0005;
+    if (f.x < 0.02) f.x = 0.98; if (f.x > 0.98) f.x = 0.02;
+    if (f.y < 0.28) f.y = 0.92; if (f.y > 0.92) f.y = 0.28;
+  }
+}
+function fliesDraw(x, w, h, now){
+  for (var i = 0; i < flies.length; i++){
+    var f = flies[i];
+    var a = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(now / 1000 * f.sp + f.ph));
+    var px = f.x * w, py = f.y * h, r = Math.max(1.2, Math.min(w, h) * 0.008);
+    var gd = x.createRadialGradient(px, py, 0, px, py, r * 3.4);
+    gd.addColorStop(0, 'rgba(250,244,186,' + a + ')');
+    gd.addColorStop(0.35, 'rgba(232,222,140,' + (a * 0.5) + ')');
+    gd.addColorStop(1, 'rgba(232,222,140,0)');
+    x.fillStyle = gd;
+    x.beginPath(); x.arc(px, py, r * 3.4, 0, 6.2832); x.fill();
+  }
+}
+
+/* ---------- 住人 ---------- */
+var pet = {
+  x: 0, y: 0, tx: 0, ty: 0, vx: 0, vy: 0,
+  br: 0, hop: 0, crouch: 0, look: 0, lookT: 0, glow: 0, seed: 0
+};
+function petInit(){ pet.x = W * 0.5; pet.y = H * 0.66; pet.tx = pet.x; pet.ty = pet.y; }
+
+/* 曇りが薄い所をさがす。子どもが拭いた所へ寄っていく */
+var probe = null;
+function clearestSpot(){
+  var sw = fogCv.width, sh = fogCv.height;
+  if (sw < 4 || sh < 4) return null;
+  if (!probe) probe = document.createElement('canvas');
+  if (probe.width !== 12 || probe.height !== 20){ probe.width = 12; probe.height = 20; }
+  var pg = probe.getContext('2d');
+  pg.globalCompositeOperation = 'copy';
+  pg.drawImage(fogCv, 0, 0, sw, sh, 0, 0, 12, 20);
+  var d;
+  try { d = pg.getImageData(0, 0, 12, 20).data; } catch (e) { return null; }
+  var best = 1e9, bx = 0.5, by = 0.62, any = false;
+  for (var j = 2; j < 17; j++){
+    for (var i = 0; i < 12; i++){
+      var a = d[(j * 12 + i) * 4 + 3];
+      if (a < best){ best = a; bx = (i + 0.5) / 12; by = (j + 0.5) / 20; any = true; }
+    }
+  }
+  if (!any || best > 200) return null;
+  return { x: bx * W, y: by * H };
+}
+
+/* ---------- ループ ---------- */
+var prev = performance.now();
+var probeT = 0;
+var chimeT = 0;
+
+function frame(now){
+  var dt = Math.min(0.05, (now - prev) / 1000);
+  prev = now;
+  var sw = fogCv.width, sh = fogCv.height;
+
+  /* 曇りは放っておくと戻る。およそ10秒で元へ */
+  var back = (1 - Math.exp(-0.16 * dt)) * 0.88;
+  fogG.globalCompositeOperation = 'source-over';
+  fogG.fillStyle = FOG + back.toFixed(4) + ')';
+  fogG.fillRect(0, 0, sw, sh);
+
+  /* よる の層もゆっくり昼へ戻る */
+  mskG.globalCompositeOperation = 'destination-out';
+  mskG.fillStyle = 'rgba(0,0,0,' + (1 - Math.exp(-0.045 * dt)).toFixed(4) + ')';
+  mskG.fillRect(0, 0, sw, sh);
+  mskG.globalCompositeOperation = 'source-over';
+
+  /* 指ごとの処理 */
+  var id;
+  for (id in pts){
+    var p = pts[id];
+    var dx = p.x - p.px, dy = p.y - p.py;
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    var inst = dist / Math.max(0.008, dt);
+    p.v += (inst - p.v) * Math.min(1, dt * 14);
+    p.px = p.x; p.py = p.y;
+
+    if (p.voice) p.voice.set(p.v);
+
+    var r = U * 0.9;
+    if (dist > 0.4){
+      /* 動いた分をつないで削る。速い指でも切れ目を作らない */
+      var steps = Math.min(14, Math.max(1, Math.ceil(dist / (r * 0.4))));
+      for (var s = 1; s <= steps; s++){
+        var t = s / steps;
+        wipe(p.px - dx * (1 - t), p.py - dy * (1 - t), r, 0.85);
+      }
+      /* つよさの端。ゆっくりだと よる が透け、速いと昼へ戻る */
+      if (p.v < 340){
+        var soft = (1 - p.v / 340);
+        paintNight(p.x, p.y, r * 0.85, 0.3 * soft, false);
+        if (now - chimeT > 900 && soft > 0.55 && Math.random() < 0.05){
+          chimeT = now; Snd.chime(520 + Math.random() * 380);
+        }
+      } else if (p.v > 950){
+        paintNight(p.x, p.y, r * 1.1, 0.22, true);
+        if (Math.random() < 0.14){
+          addDrop(p.x + (Math.random() - 0.5) * r, p.y + (Math.random() - 0.5) * r * 0.6,
+                  2.5 + Math.random() * 3.5);
+        }
+      }
+      lastInput = now;
+    }
+  }
+
+  /* 3秒の無操作で誘う。文字も声も使わない */
+  var idle = (now - lastInput) / 1000;
+  if (nPts === 0 && idle > 3){
+    idleWave += dt;
+    if (idleWave > 1.7){
+      idleWave = 0;
+      var ix = W * (0.2 + Math.random() * 0.6), iy = H * (0.14 + Math.random() * 0.2);
+      addDrop(ix, iy, 3.5 + Math.random() * 3);
+      Snd.drop(760 + Math.random() * 240, 0.05);
+      pet.hop = 1; pet.crouch = 0.5;
+      pet.tx = ix; pet.ty = Math.min(H * 0.8, iy + H * 0.35);
+    }
+  }
+
+  /* しずく。落ちた跡が細く晴れる */
+  for (var i = drops.length - 1; i >= 0; i--){
+    var d2 = drops[i];
+    d2.vy += 34 * dt;
+    d2.y += d2.vy * dt;
+    d2.x += Math.sin(d2.y / 26) * 8 * dt;
+    wipe(d2.x, d2.y, d2.r * 0.8, 0.22);
+    d2.life -= dt * 0.3;
+    if (d2.y > H + 20 || d2.life <= 0) drops.splice(i, 1);
+  }
+
+  /* 住人。薄くなった所へ寄る */
+  probeT += dt;
+  if (probeT > 0.55){
+    probeT = 0;
+    var sp = clearestSpot();
+    if (sp && nPts > 0){ pet.tx = sp.x; pet.ty = Math.max(H * 0.3, Math.min(H * 0.82, sp.y)); }
+  }
+  /* 溜めてから動き、行き過ぎてから収まる */
+  var ax = (pet.tx - pet.x) * 16, ay = (pet.ty - pet.y) * 16;
+  pet.vx += ax * dt; pet.vy += ay * dt;
+  pet.vx *= Math.pow(0.0035, dt); pet.vy *= Math.pow(0.0035, dt);
+  pet.x += pet.vx * dt; pet.y += pet.vy * dt;
+  pet.br += dt * 1.9;
+  pet.hop = Math.max(0, pet.hop - dt * 1.6);
+  pet.crouch = Math.max(0, pet.crouch - dt * 2.6);
+
+  /* 触られたら そちらを見る */
+  var fx = null, fy = null;
+  for (id in pts){ fx = pts[id].x; fy = pts[id].y; break; }
+  var want = 0;
+  if (fx !== null) want = Math.max(-1, Math.min(1, (fx - pet.x) / (U * 4)));
+  pet.look += (want - pet.look) * Math.min(1, dt * 6);
+
+  fliesStep(dt, now);
+  drawAll(now);
+  requestAnimationFrame(frame);
+}
+
+function drawAll(now){
+  var sw = fogCv.width, sh = fogCv.height;
+
+  /* よる の層を、なでた形だけ切り抜く */
+  nitG.setTransform(1,0,0,1,0,0);
+  nitG.globalCompositeOperation = 'copy';
+  nitG.drawImage(drkCv, 0, 0);
+  nitG.globalCompositeOperation = 'source-over';
+  fliesDraw(nitG, nitCv.width, nitCv.height, now);
+  nitG.globalCompositeOperation = 'destination-in';
+  nitG.drawImage(mskCv, 0, 0);
+  nitG.globalCompositeOperation = 'source-over';
+
+  g.globalCompositeOperation = 'source-over';
+  g.imageSmoothingEnabled = true;
+  g.drawImage(dayCv, 0, 0, sw, sh, 0, 0, W, H);
+  g.drawImage(nitCv, 0, 0, sw, sh, 0, 0, W, H);
+
+  drawPet();
+
+  /* 曇りガラス */
+  g.drawImage(fogCv, 0, 0, sw, sh, 0, 0, W, H);
+
+  /* ガラスについた しずく は曇りの手前 */
+  for (var i = 0; i < drops.length; i++){
+    var d = drops[i];
+    g.fillStyle = 'rgba(236,246,250,0.5)';
+    g.beginPath(); g.ellipse(d.x, d.y, d.r, d.r * 1.35, 0, 0, 6.2832); g.fill();
+    g.fillStyle = 'rgba(252,254,255,0.55)';
+    g.beginPath(); g.arc(d.x - d.r * 0.3, d.y - d.r * 0.4, d.r * 0.32, 0, 6.2832); g.fill();
+  }
+
+  /* 窓わく。ガラスの内側だと分かる縁 */
+  g.strokeStyle = 'rgba(122,134,138,0.28)';
+  g.lineWidth = Math.max(6, U * 0.16);
+  g.strokeRect(g.lineWidth / 2, g.lineWidth / 2, W - g.lineWidth, H - g.lineWidth);
+}
+
+function drawPet(){
+  var r = U * 0.66;
+  var breath = 1 + Math.sin(pet.br) * 0.025;
+  var squash = 1 - pet.crouch * 0.22 + pet.hop * 0.1;
+  g.save();
+  g.translate(pet.x, pet.y);
+  g.rotate(pet.look * 0.12);
+  g.scale(breath / squash, breath * squash);
+
+  /* しっぽ */
+  g.strokeStyle = '#c07a33'; g.lineWidth = r * 0.28; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(-r * 0.75, r * 0.35);
+  g.quadraticCurveTo(-r * 1.5, r * 0.1 + Math.sin(pet.br * 1.3) * r * 0.25, -r * 1.5, -r * 0.35);
+  g.stroke();
+
+  /* みみ */
+  g.fillStyle = '#cf8238';
+  g.beginPath(); g.moveTo(-r * 0.52, -r * 0.72); g.lineTo(-r * 0.2, -r * 1.28); g.lineTo(-r * 0.02, -r * 0.7); g.closePath(); g.fill();
+  g.beginPath(); g.moveTo(r * 0.52, -r * 0.72); g.lineTo(r * 0.2, -r * 1.28); g.lineTo(r * 0.02, -r * 0.7); g.closePath(); g.fill();
+
+  /* からだ */
+  g.fillStyle = '#df9245';
+  g.beginPath(); g.arc(0, 0, r, 0, 6.2832); g.fill();
+  g.fillStyle = '#f6dcb0';
+  g.beginPath(); g.ellipse(0, r * 0.3, r * 0.6, r * 0.5, 0, 0, 6.2832); g.fill();
+
+  /* め。指のほうへ寄る */
+  var ex = pet.look * r * 0.12;
+  g.fillStyle = '#3b352d';
+  g.beginPath(); g.arc(-r * 0.3 + ex, -r * 0.14, r * 0.13, 0, 6.2832); g.fill();
+  g.beginPath(); g.arc(r * 0.3 + ex, -r * 0.14, r * 0.13, 0, 6.2832); g.fill();
+  g.fillStyle = 'rgba(250,252,250,0.85)';
+  g.beginPath(); g.arc(-r * 0.26 + ex, -r * 0.19, r * 0.045, 0, 6.2832); g.fill();
+  g.beginPath(); g.arc(r * 0.34 + ex, -r * 0.19, r * 0.045, 0, 6.2832); g.fill();
+
+  /* はな */
+  g.fillStyle = '#b9705a';
+  g.beginPath(); g.ellipse(ex * 0.6, r * 0.08, r * 0.1, r * 0.075, 0, 0, 6.2832); g.fill();
+  g.restore();
+}
+
+/* ---------- 入力 ---------- */
+cv.addEventListener('pointerdown', function(e){
+  e.preventDefault();
+  Snd.wake();
+  addPoint(e.pointerId, e.clientX, e.clientY);
+  /* 空振りはない。触れた所は必ず晴れて、必ず1音返る */
+  wipe(e.clientX, e.clientY, U * 0.88, 0.8);
+  Snd.drop(560 + Math.random() * 420, 0.075);
+  if (Math.random() < 0.2) addDrop(e.clientX, e.clientY - U * 0.2, 2 + Math.random() * 2.4);
+}, { passive: false });
+
+window.addEventListener('pointermove', function(e){
+  var p = pts[e.pointerId];
+  if (!p) return;
+  e.preventDefault();
+  p.x = e.clientX; p.y = e.clientY;
+  lastInput = performance.now();
+}, { passive: false });
+
+['pointerup', 'pointercancel', 'pointerleave'].forEach(function(k){
+  window.addEventListener(k, function(e){ dropPoint(e.pointerId); }, true);
+});
+window.addEventListener('blur', function(){
+  var id; for (id in pts) dropPoint(id);
+});
+cv.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+window.addEventListener('resize', function(){ resize(); petInit(); });
+
+/* ---------- もどる（700ms 長押し） ---------- */
+var home = document.getElementById('home'), ht = null;
+function hStart(e){
+  e.preventDefault(); e.stopPropagation();
+  home.classList.add('hold');
+  ht = setTimeout(function(){ location.href = '../../'; }, 700);
+}
+function hEnd(e){
+  if (e) e.stopPropagation();
+  home.classList.remove('hold');
+  if (ht){ clearTimeout(ht); ht = null; }
+}
+home.addEventListener('pointerdown', hStart, { passive: false });
+['pointerup','pointerleave','pointercancel'].forEach(function(k){
+  home.addEventListener(k, hEnd);
+});
+
+resize();
+petInit();
+fliesInit();
+lastInput = performance.now();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
