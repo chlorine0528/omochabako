@@ -71,7 +71,7 @@ function resize(){
   LAND = W > H;
   groundY = Math.round(H * (LAND ? 0.42 : 0.46));
   HR = clamp(Math.min(W, H) / 390, 0.62, 1.5);
-  VS = clamp(Math.min(W / 300, groundY / 250), 0.55, 1.7);
+  VS = clamp(Math.min(W / 300, groundY / 250), 0.55, 1.7) * 0.72;
   SKY = ctx.createLinearGradient(0, 0, 0, groundY);
   SKY.addColorStop(0,   '#cfe1e6');
   SKY.addColorStop(0.6, '#e2ecdf');
@@ -80,10 +80,9 @@ function resize(){
   SOIL.addColorStop(0,   '#a78156');
   SOIL.addColorStop(0.5, '#8d6944');
   SOIL.addColorStop(1,   '#6e5235');
-  if (plant){
-    plant.x = clamp(plant.x, W * 0.24, W * 0.76);
-    plant.y = groundY;
-  }
+  relayout();
+  makeSpecks();
+  makeLayer();
   layoutHelpers();
 }
 window.addEventListener('resize', resize);
@@ -273,7 +272,7 @@ function drawLeaves(k, sc, n, dir, st, t, seed, tr){
   for (i = 0; i < n; i++){
     a = (i - (n - 1) / 2) * (0.42 - st * 0.13) + Math.sin(t * 0.9 + i * 1.7 + seed) * 0.06;
     a = a * (1 - st * 0.55) + dir * st * 0.78;
-    L = (34 + k.len * 0.42) * sc * (0.8 + (i % 2) * 0.24) * (1 + st * 0.58);
+    L = (30 + k.len * 0.36) * sc * (0.8 + (i % 2) * 0.24) * (1 + st * 0.58);
     bw = (7 + k.wid * 0.055) * sc * (1 - st * 0.28);
     tipx = Math.sin(a) * L + tr * Math.sin(t * 22 + i);
     tipy = -Math.cos(a) * L;
@@ -299,13 +298,21 @@ function shade(hex, d){
   return 'rgb(' + (r | 0) + ',' + (g | 0) + ',' + (b | 0) + ')';
 }
 
+
+function mix(a, b, t){
+  var ar = parseInt(a.slice(1, 3), 16), ag = parseInt(a.slice(3, 5), 16), ab = parseInt(a.slice(5, 7), 16);
+  var br = parseInt(b.slice(1, 3), 16), bg = parseInt(b.slice(3, 5), 16), bb = parseInt(b.slice(5, 7), 16);
+  return 'rgb(' + Math.round(ar + (br - ar) * t) + ',' + Math.round(ag + (bg - ag) * t) + ',' +
+         Math.round(ab + (bb - ab) * t) + ')';
+}
+
 /* ---------- 手伝いの生きもの ---------- */
 var HCOL = ['#e0a35c', '#cf7f6e', '#8fae6a', '#6fa2a8', '#c59bb0', '#d9c06a', '#9a9ad0', '#e2b98c'];
 
 function makeHelper(){
   return {
     col: pick(HCOL), seed: rnd(0, 6.3), sc: rnd(0.86, 1.16),
-    hx: W / 2, hy: H - 50, born: now(), lean: 0, fall: 0, fallAt: 0, up: 0,
+    hx: W / 2, hy: H - 50, lean: 0, fall: 0, fallAt: 0, upAt: 0, rung: false,
     hop: 0, look: 0
   };
 }
@@ -321,69 +328,202 @@ function layoutHelpers(){
   }
 }
 
-function drawHelper(hp, t){
+/* ef は 0 から 1 の力み具合。引きの量をそのまま渡す */
+function drawHelper(hp, t, ef){
   var R = 25 * HR * hp.sc;
   var br = 1 + Math.sin(t * 2.1 + hp.seed) * 0.03;
-  var ang = hp.lean + hp.fall;
+  var down = Math.abs(hp.fall) > 0.5;
+  var e = down ? 0 : ef;
+  var sq = 1 + e * 0.16;
   ctx.save();
   ctx.translate(hp.hx, hp.hy - hp.hop);
   ctx.fillStyle = 'rgba(80,58,36,.16)';
-  ctx.beginPath(); ctx.ellipse(0, R * 0.92, R * 0.86, R * 0.2, 0, 0, 6.3); ctx.fill();
-  ctx.rotate(ang);
+  ctx.beginPath(); ctx.ellipse(0, R * 0.92, R * 0.86, R * 0.2, 0, 0, 6.283); ctx.fill();
+  ctx.rotate(hp.lean + hp.fall);
   ctx.beginPath();
-  ctx.ellipse(0, 0, R * 0.82 / br, R * 0.92 * br, 0, 0, 6.3);
-  ctx.fillStyle = hp.col; ctx.fill();
+  ctx.ellipse(0, e * R * 0.1, R * 0.82 / br * sq, R * 0.92 * br / sq, 0, 0, 6.283);
+  ctx.fillStyle = e > 0.02 ? mix(hp.col, '#d4705e', e * 0.34) : hp.col;
+  ctx.fill();
   ctx.lineWidth = 3; ctx.strokeStyle = shade(hp.col, -46); ctx.stroke();
   ctx.fillStyle = shade(hp.col, -50);
-  ctx.beginPath(); ctx.ellipse(-R * 0.3, R * 0.9, R * 0.16, R * 0.12, 0, 0, 6.3); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(R * 0.3, R * 0.9, R * 0.16, R * 0.12, 0, 0, 6.3); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-R * (0.3 + e * 0.17), R * 0.9, R * 0.16, R * 0.12, 0, 0, 6.283); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(R * (0.3 + e * 0.17), R * 0.9, R * 0.16, R * 0.12, 0, 0, 6.283); ctx.fill();
+  /* て。力むほど後ろへ張る */
+  if (e > 0.05){
+    ctx.strokeStyle = shade(hp.col, -38);
+    ctx.lineWidth = Math.max(3, R * 0.17); ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.66, R * 0.12); ctx.lineTo(-R * (0.66 + e * 0.5), R * (0.12 - e * 0.5));
+    ctx.moveTo(R * 0.66, R * 0.12); ctx.lineTo(R * (0.66 + e * 0.5), R * (0.12 - e * 0.5));
+    ctx.stroke();
+  }
+  /* ほお */
+  if (e > 0.1){
+    ctx.fillStyle = 'rgba(210,102,84,' + (e * 0.42).toFixed(2) + ')';
+    ctx.beginPath(); ctx.ellipse(-R * 0.47, R * 0.12, R * 0.18, R * 0.11, 0, 0, 6.283); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(R * 0.47, R * 0.12, R * 0.18, R * 0.11, 0, 0, 6.283); ctx.fill();
+  }
+  /* め。力むほど細くなる。転がっているあいだは丸くなる */
   var ex = hp.look * R * 0.16;
+  var ew = R * (0.11 + e * 0.08) * (down ? 1.3 : 1);
+  var eh = R * (down ? 0.19 : 0.14 * (1 - e * 0.86));
   ctx.fillStyle = '#4a3a2c';
-  ctx.beginPath(); ctx.ellipse(-R * 0.26 + ex, -R * 0.14, R * 0.11, R * 0.14, 0, 0, 6.3); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(R * 0.26 + ex, -R * 0.14, R * 0.11, R * 0.14, 0, 0, 6.3); ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,.34)';
-  ctx.beginPath(); ctx.ellipse(-R * 0.24, -R * 0.42, R * 0.22, R * 0.14, -0.3, 0, 6.3); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-R * 0.26 + ex, -R * 0.14, ew, eh, 0, 0, 6.283); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(R * 0.26 + ex, -R * 0.14, ew, eh, 0, 0, 6.283); ctx.fill();
+  /* まゆ */
+  if (e > 0.12){
+    ctx.strokeStyle = '#4a3a2c';
+    ctx.lineWidth = Math.max(2.4, R * 0.09); ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.45, -R * (0.33 + e * 0.06)); ctx.lineTo(-R * 0.12, -R * (0.25 - e * 0.07));
+    ctx.moveTo(R * 0.45, -R * (0.33 + e * 0.06)); ctx.lineTo(R * 0.12, -R * (0.25 - e * 0.07));
+    ctx.stroke();
+  }
+  /* くち */
+  if (e > 0.18){
+    ctx.fillStyle = '#7d4a3a';
+    ctx.beginPath();
+    ctx.ellipse(0, R * 0.27, R * (0.1 + e * 0.11), R * (0.05 + e * 0.11), 0, 0, 6.283);
+    ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(255,255,255,.32)';
+  ctx.beginPath(); ctx.ellipse(-R * 0.24, -R * 0.42, R * 0.22, R * 0.14, -0.3, 0, 6.283); ctx.fill();
   ctx.restore();
+  /* あせ。頭の横から飛ぶ */
+  if (e > 0.2){
+    var i, ph, a2;
+    for (i = 0; i < 2; i++){
+      ph = (t * (1.4 + i * 0.45) + hp.seed + i * 0.5) % 1;
+      a2 = (1 - ph) * (e - 0.2) * 2.6;
+      if (a2 <= 0.02) continue;
+      ctx.globalAlpha = clamp(a2, 0, 0.85);
+      ctx.fillStyle = '#a8d6e6';
+      ctx.beginPath();
+      ctx.ellipse(hp.hx + (i ? 1 : -1) * R * (0.72 + ph * 0.75),
+                  hp.hy - hp.hop - R * (0.5 - ph * 1.05),
+                  R * 0.13, R * 0.18, 0, 0, 6.283);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
 }
 
 /* ---------- 状態 ---------- */
 function now(){ return performance.now(); }
-var helpers = [], loose = [], dust = [], plant = null;
-var lastKind = null, lastX = 0, lastInput = now(), leanDir = 1;
-var demo = 0, demoT = 0;
+var helpers = [], plants = [], flying = [], dust = [], pile = [];
+var pulling = null, lastKind = null, lastInput = now(), leanDir = 1;
+var demoT = 0, growT = 0, pileN = 0, LANES = 3, effortG = 0;
+var layer = null, lctx = null;
 
-function newPlant(){
-  var k = KINDS[Math.floor(Math.random() * KINDS.length)];
-  if (lastKind && k.id === lastKind.id) k = KINDS[(KINDS.indexOf(k) + 1 + Math.floor(Math.random() * 7)) % KINDS.length];
-  lastKind = k;
-  var x = 0, i;
-  for (i = 0; i < 8; i++){
-    x = rnd(W * 0.26, W * 0.74);
-    if (Math.abs(x - lastX) > W * 0.16) break;
+/* この秒数ごとに1本生える。引かないでいると畑が埋まっていく */
+var GROW_EVERY = 6.5;
+
+function laneCount(){ return clamp(Math.round(W / (118 * HR)), 3, 6); }
+/* 奥の列と、半分ずらした手前の列。手前のほうが少し大きい */
+function slotCount(){ return LANES * 2 - 1; }
+function slotX(i){
+  var lane = i < LANES ? i : i - LANES, span = W * 0.9, x0 = W * 0.05;
+  return x0 + span * (lane + 0.5) / LANES + (i < LANES ? 0 : span * 0.5 / LANES);
+}
+function slotDY(i){ return i < LANES ? 0 : (H - groundY) * 0.13; }
+function slotSC(i){ return i < LANES ? 1 : 1.1; }
+
+function relayout(){
+  LANES = laneCount();
+  while (plants.length > slotCount()) plants.splice(plants.length - 1, 1);
+  for (var i = 0; i < plants.length; i++){
+    var q = plants[i];
+    q.slot = i % slotCount();
+    q.x = slotX(q.slot);
+    q.dy = slotDY(q.slot);
+    q.sc = q.sc0 * VS * slotSC(q.slot);
   }
-  lastX = x;
+  sortPlants();
+}
+
+/* 奥から先に描くために、深さの順に並べておく */
+function sortPlants(){ plants.sort(function(a, b){ return a.dy - b.dy; }); }
+
+function makePlant(slot){
+  var k = KINDS[Math.floor(Math.random() * KINDS.length)];
+  if (lastKind && k.id === lastKind.id)
+    k = KINDS[(KINDS.indexOf(k) + 1 + Math.floor(Math.random() * 7)) % KINDS.length];
+  lastKind = k;
+  var s0 = rnd(0.88, 1.16);
   return {
-    k: k, sc: rnd(0.88, 1.16) * VS, seed: rnd(0, 6.3), x: x, grow: 0,
-    p: 0, pv: 0, raw: 0, creep: 0, grab: null, fx: 0, fy: 0, sp: 0,
-    voice: null, sway: 0
+    k: k, sc0: s0, sc: s0 * VS * slotSC(slot), seed: rnd(0, 6.3), slot: slot,
+    x: slotX(slot), dy: slotDY(slot), grow: 0,
+    p: 0, pv: 0, creep: 0, fx: 0, fy: 0, sp: 0, sway: 0, step: 0
   };
 }
 
-var SLOTX = [0.22, 0.52, 0.78], SLOTY = [0.26, 0.52, 0.38], slotN = 0;
+function freeSlot(){
+  var used = {}, i, cand = [];
+  for (i = 0; i < plants.length; i++) used[plants[i].slot] = 1;
+  for (i = 0; i < slotCount(); i++) if (!used[i]) cand.push(i);
+  return cand.length ? pick(cand) : -1;
+}
 
-function addLoose(k, sc, seed, x, y, vy){
-  var i = slotN % 3; slotN++;
-  var ext = k.len * sc * 0.58 * 0.8 + 30 * HR;
-  var tx = clamp(W * SLOTX[i], Math.min(ext, W * 0.42), Math.max(W - ext, W * 0.58));
-  var yr = groundY + (H - groundY) * SLOTY[i];
-  var g = 1750 * HR;
-  var tt = (-vy + Math.sqrt(Math.max(1, vy * vy + 2 * g * Math.max(10, yr - y)))) / g;
-  loose.push({
-    k: k, sc: sc, seed: seed, x: x, y: y, vx: (tx - x) / Math.max(0.15, tt), vy: vy, ext: ext,
-    rot: 0, rv: (tx > x ? 1 : -1) * rnd(3, 6), rest: 0, lie: (Math.random() < 0.5 ? 1.57 : -1.57) + rnd(-0.2, 0.2),
-    yr: yr, fade: 1
-  });
-  while (loose.length > 3) loose.splice(0, 1);
+function addPlant(slot){
+  if (slot === undefined) slot = freeSlot();
+  if (slot < 0 || plants.length >= slotCount()) return null;
+  var p = makePlant(slot);
+  plants.push(p);
+  sortPlants();
+  return p;
+}
+
+/* ---------- 抜いたやさいを置いておく層 ---------- */
+/* 抜いたものは消さない。1枚の絵に焼き付けて残すので、増えても重くならない */
+function makeLayer(){
+  layer = document.createElement('canvas');
+  layer.width = c.width; layer.height = c.height;
+  lctx = layer.getContext('2d');
+  lctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  for (var i = 0; i < pile.length; i++){
+    var r = pile[i];
+    r.x = r.fx * W;
+    r.y = groundY + r.fy * (H - groundY);
+    r.sc = r.sc0 * VS;
+    stampVeg(r);
+  }
+}
+
+function stampVeg(r){
+  var old = ctx;
+  ctx = lctx;
+  ctx.save();
+  ctx.translate(r.x, r.y);
+  ctx.rotate(r.lie);
+  ctx.translate(0, -r.k.len * r.sc * 0.58 * 0.55);
+  drawBody(r.k, r.sc * 0.58, 0, 0, r.seed);
+  drawLeaves(r.k, r.sc * 0.48, 4, 0, 0, 0, r.seed, 0);
+  ctx.restore();
+  ctx = old;
+}
+
+/* 置き場所。列と段で並べ、埋まったら少しずらして重ねていく */
+function pileSpot(k, sc){
+  var cols = 3, rows = 5;
+  var i = pileN++;
+  var col = i % cols, row = Math.floor(i / cols) % rows, lap = Math.floor(i / (cols * rows));
+  /* 葉の分まで見込んで、画面からはみ出さない位置に寄せる */
+  var ext = k.len * sc * 0.58 * 0.8 + 34 * HR;
+  return {
+    x: clamp(W * (col + 0.5) / cols + (lap % 3 - 1) * 16 * HR + rnd(-8, 8) * HR,
+             Math.min(ext, W * 0.42), Math.max(W - ext, W * 0.58)),
+    y: groundY + (H - groundY) * (0.28 + row * 0.105) + rnd(-6, 6) * HR
+  };
+}
+
+function land(o){
+  var r = {
+    k: o.k, sc0: o.sc0, sc: o.sc, seed: o.seed, lie: o.lie,
+    x: o.x, y: o.y, fx: o.x / W, fy: (o.y - groundY) / Math.max(1, H - groundY)
+  };
+  pile.push(r);
+  while (pile.length > 400) pile.splice(0, 1);
+  stampVeg(r);
 }
 
 function puff(x, y, n, col, pw){
@@ -399,47 +539,68 @@ function puff(x, y, n, col, pw){
 }
 
 /* ---------- 引く ---------- */
-function pullDist(){ return Math.max(84, Math.min(W, H) * 0.29); }
+/* 抜けるまでの距離。粘らせたいので画面の短い辺の4割ぶん引く */
+function pullDist(){ return Math.max(118, Math.min(W, H) * 0.40); }
 
-function grabAt(x, y){
-  if (!plant) return false;
-  var cy = groundY - plant.p * plant.k.len * plant.sc * 0.82;
-  var r = Math.max(62, 0.19 * Math.min(W, H));
-  var dx = x - plant.x, dy = y - (cy - 26 * HR);
-  return dx * dx + dy * dy < r * r;
+function crownY(p){ return groundY + p.dy - p.p * p.k.len * p.sc * 0.82; }
+
+/* 引きの量を、見た目の伸びに直す。3か所で少し止まってから、また動く */
+function resist(raw){
+  var a = 0.055 * Math.sin(clamp(raw, 0, 1) * Math.PI);
+  return clamp(raw - a * Math.max(0, Math.sin((raw - 0.08) * Math.PI * 7)), 0, 1);
 }
 
-function startPull(id, x, y){
-  plant.grab = id; plant.fx = x; plant.fy = y; plant.creep = 0;
-  plant.p = Math.max(plant.p, 0.06);
-  plant.sway = 0;
-  if (!plant.voice) plant.voice = pullVoice();
-  leanDir = plant.x > W / 2 ? -1 : 1;
+function grabAt(x, y){
+  var best = null, bd = 1e9, i, p, dx, dy, d;
+  var r = Math.max(58, 0.155 * Math.min(W, H));
+  for (i = 0; i < plants.length; i++){
+    p = plants[i];
+    dx = x - p.x; dy = y - (crownY(p) - 26 * HR);
+    d = dx * dx + dy * dy;
+    if (d < r * r && d < bd){ bd = d; best = p; }
+  }
+  return best;
+}
+
+function startPull(p, id, x, y){
+  pulling = { p: p, id: id, voice: pullVoice() };
+  p.fx = x; p.fy = y; p.creep = 0; p.step = 0; p.sway = 0;
+  p.p = Math.max(p.p, 0.06);
+  leanDir = p.x > W / 2 ? -1 : 1;
 }
 
 function endPull(){
-  if (!plant) return;
-  plant.grab = null; plant.creep = 0;
-  if (plant.voice){ plant.voice.stop(); plant.voice = null; }
-  if (plant.p > 0.12){
-    ping(jit(plant.k.freq * 0.6), 0.18, 'sine', 0.1);
-    puff(plant.x, groundY, 5, '#8a6a45', 0.5);
+  if (!pulling) return;
+  var p = pulling.p;
+  if (pulling.voice) pulling.voice.stop();
+  pulling = null;
+  p.creep = 0; p.step = 0;
+  if (p.p > 0.12){
+    ping(jit(p.k.freq * 0.6), 0.18, 'sine', 0.1);
+    puff(p.x, groundY + p.dy, 5, '#8a6a45', 0.5);
   }
 }
 
-function popOut(){
-  var k = plant.k, sc = plant.sc;
-  var ang = Math.atan2(plant.fy - (groundY - 40 * HR), plant.fx - plant.x);
-  var sp = 430 * HR;
-  var cy = groundY - plant.p * k.len * sc * 0.82;
+function popOut(p){
+  var k = p.k, sc = p.sc, slot = p.slot;
+  var ang = Math.atan2(p.fy - (groundY - 40 * HR), p.fx - p.x);
+  var cy = crownY(p);
+  var vy = -Math.abs(Math.sin(ang) * 430 * HR) * 0.62 - 150 * HR;
+  var g = 1750 * HR;
+  var spot = pileSpot(k, sc);
+  var tt = (-vy + Math.sqrt(Math.max(1, vy * vy + 2 * g * Math.max(10, spot.y - cy)))) / g;
   sPop(k.freq);
-  puff(plant.x, groundY, 16, '#8a6a45', 1.5);
-  addLoose(k, sc, plant.seed, plant.x, cy, -Math.abs(Math.sin(ang) * sp) * 0.62 - 150 * HR);
+  puff(p.x, groundY + p.dy, 16, '#8a6a45', 1.5);
+  flying.push({
+    k: k, sc0: p.sc0, sc: sc, seed: p.seed, x: p.x, y: cy,
+    vx: (spot.x - p.x) / Math.max(0.15, tt), vy: vy, rot: 0,
+    rv: (spot.x > p.x ? 1 : -1) * rnd(3, 6),
+    lie: (Math.random() < 0.5 ? 1.57 : -1.57) + rnd(-0.2, 0.2), yr: spot.y
+  });
   /* 連れが1体増える。上限6体で古いものと入れ替える */
   helpers.push(makeHelper());
   while (helpers.length > 6) helpers.splice(0, 1);
   layoutHelpers();
-  /* 端から順に後ろへ転がる */
   var t = now() / 1000, i, idx;
   for (i = 0; i < helpers.length; i++){
     idx = leanDir > 0 ? helpers.length - 1 - i : i;
@@ -447,8 +608,13 @@ function popOut(){
     helpers[idx].upAt = t + 1.15 + i * 0.1;
     helpers[idx].rung = false;
   }
-  if (plant.voice){ plant.voice.stop(); plant.voice = null; }
-  plant = newPlant();
+  if (pulling && pulling.p === p){
+    if (pulling.voice) pulling.voice.stop();
+    pulling = null;
+  }
+  plants.splice(plants.indexOf(p), 1);
+  /* 抜いた跡にすぐ次の芽が出る */
+  addPlant(slot);
   ping(jit(660), 0.1, 'triangle', 0.07);
 }
 
@@ -459,7 +625,7 @@ function down(e){
   audio();
   var r = c.getBoundingClientRect();
   var x = e.clientX - r.left, y = e.clientY - r.top;
-  lastInput = now(); demo = 0; demoT = 0;
+  lastInput = now(); demoT = 0;
   pts[e.pointerId] = { x: x, y: y };
   var i, hp, dx, dy, R;
   /* どこを押しても土煙と短い音が返る */
@@ -478,7 +644,10 @@ function down(e){
       ping(jit(392 + i * 62), 0.16, 'triangle', 0.12);
     }
   }
-  if (plant && plant.grab === null && grabAt(x, y)) startPull(e.pointerId, x, y);
+  if (!pulling){
+    var g = grabAt(x, y);
+    if (g) startPull(g, e.pointerId, x, y);
+  }
   if (e.cancelable) e.preventDefault();
 }
 
@@ -487,14 +656,15 @@ function move(e){
   var r = c.getBoundingClientRect();
   p.x = e.clientX - r.left; p.y = e.clientY - r.top;
   lastInput = now();
-  if (plant && plant.grab === e.pointerId){
-    plant.sp = Math.hypot(p.x - plant.fx, p.y - plant.fy) * 60;
-    plant.fx = p.x; plant.fy = p.y;
+  if (pulling && pulling.id === e.pointerId){
+    var q = pulling.p;
+    q.sp = Math.hypot(p.x - q.fx, p.y - q.fy) * 60;
+    q.fx = p.x; q.fy = p.y;
   }
 }
 
 function up(e){
-  if (plant && plant.grab === e.pointerId) endPull();
+  if (pulling && pulling.id === e.pointerId) endPull();
   delete pts[e.pointerId];
   lastInput = now();
 }
@@ -536,24 +706,30 @@ function makeSpecks(){
   }
 }
 
-function drawSoil(hx, hy, hrx, hry){
-  var x, i, s;
+/* holes は穴の一覧。生えている本数だけ開ける */
+function drawSoil(holes){
+  var x, i, s, hl;
   ctx.beginPath();
   ctx.moveTo(0, groundY);
   for (x = 0; x <= W; x += 14) ctx.lineTo(x, groundY + Math.sin(x * 0.021) * 2.4);
   ctx.lineTo(W, groundY + Math.sin(W * 0.021) * 2.4);
   ctx.lineTo(W, H + 2); ctx.lineTo(0, H + 2); ctx.closePath();
-  ctx.moveTo(hx + hrx, hy);
-  ctx.ellipse(hx, hy, hrx, hry, 0, 0, 6.283);
+  for (i = 0; i < holes.length; i++){
+    hl = holes[i];
+    ctx.moveTo(hl.x + hl.rx, hl.y);
+    ctx.ellipse(hl.x, hl.y, hl.rx, hl.ry, 0, 0, 6.283);
+  }
   ctx.fillStyle = SOIL; ctx.fill('evenodd');
   for (i = 0; i < spx.length; i++){
     s = spx[i];
-    if (Math.abs(s.x - hx) < hrx && Math.abs(s.y - hy) < hry) continue;
     ctx.fillStyle = s.c;
     ctx.beginPath(); ctx.ellipse(s.x, s.y, s.r, s.r * 0.7, 0, 0, 6.283); ctx.fill();
   }
   ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(70,50,30,.32)';
-  ctx.beginPath(); ctx.ellipse(hx, hy, hrx, hry, 0, 0, 6.283); ctx.stroke();
+  for (i = 0; i < holes.length; i++){
+    hl = holes[i];
+    ctx.beginPath(); ctx.ellipse(hl.x, hl.y, hl.rx, hl.ry, 0, 0, 6.283); ctx.stroke();
+  }
 }
 
 /* 土のひび。引くほど長く伸びる */
@@ -587,176 +763,191 @@ function drawClouds(t){
 }
 
 /* ---------- ループ ---------- */
-var last = 0, autoPh = 0, shownG = 0;
+var last = 0, autoPh = 0;
 
 function frame(ms){
   var dt = last ? Math.min(0.05, (ms - last) / 1000) : 0.016;
   last = ms;
-  var t = ms / 1000, i, hp, o, k;
+  var t = ms / 1000, i, j, p, hp, o, d2;
+
+  /* --- 増える --- */
+  growT += dt;
+  if (growT > GROW_EVERY){ growT = 0; addPlant(); }
 
   /* --- 引きの量 --- */
-  var raw = 0;
-  if (plant){
-    plant.grow = Math.min(1, plant.grow + dt / 0.5);
-    if (plant.grab !== null){
-      var d = Math.hypot(plant.fx - plant.x, plant.fy - (groundY - 18 * HR));
+  var effort = 0;
+  for (i = 0; i < plants.length; i++){
+    p = plants[i];
+    p.grow = Math.min(1, p.grow + dt / 0.5);
+    if (pulling && pulling.p === p){
+      var d = Math.hypot(p.fx - p.x, p.fy - (groundY + p.dy - 18 * HR));
       var rd = clamp(d / pullDist(), 0, 1);
       /* 半分より深く引いたまま持っていると、そのぶんだけ土がゆるむ。
          指が動いていないのに勝手に伸びないよう、浅いところでは足さない */
-      plant.creep += dt * (rd > 0.45 ? 0.26 : 0);
-      raw = Math.min(1, rd + plant.creep);
-      plant.raw = raw;
-      var a = (raw - plant.p) * 430 - plant.pv * 34;
-      plant.pv += a * dt; plant.p += plant.pv * dt;
-      plant.p = clamp(plant.p, 0, 1.08);
-      if (plant.voice) plant.voice.update(plant.p, plant.sp);
-      plant.sp *= Math.exp(-dt * 6);
-      if (raw >= 1) popOut();
+      p.creep += dt * (rd > 0.5 ? 0.17 : 0);
+      var raw = Math.min(1, rd + p.creep);
+      var st = Math.floor(raw / 0.25);
+      if (st > p.step){ p.step = st; sSoil(0.45); }
+      var tgt = resist(raw);
+      var a = (tgt - p.p) * 430 - p.pv * 34;
+      p.pv += a * dt; p.p = clamp(p.p + p.pv * dt, 0, 1.08);
+      if (pulling.voice) pulling.voice.update(p.p, p.sp);
+      p.sp *= Math.exp(-dt * 6);
+      if (raw >= 1){ popOut(p); i--; continue; }
+      effort = Math.max(effort, p.p);
     } else {
-      var b = (0 - plant.p) * 170 - plant.pv * 12;
-      plant.pv += b * dt; plant.p += plant.pv * dt;
-      if (plant.p < 0.002 && Math.abs(plant.pv) < 0.02){ plant.p = 0; plant.pv = 0; }
-      plant.sway *= Math.exp(-dt * 2.0);
+      var b = (0 - p.p) * 170 - p.pv * 12;
+      p.pv += b * dt; p.p += p.pv * dt;
+      if (p.p < 0.002 && Math.abs(p.pv) < 0.02){ p.p = 0; p.pv = 0; }
+      p.sway *= Math.exp(-dt * 2.0);
     }
   }
 
   /* --- 誘い。指示は届かない前提なので動きだけで誘う --- */
   var idle = (now() - lastInput) / 1000, stage = 0, auto = 0;
-  if (plant && plant.grab === null && idle > 3){
+  if (!pulling && idle > 3 && plants.length){
     stage = idle < 8 ? 1 : (idle < 15 ? 2 : 3);
     demoT += dt;
     if (stage === 1 && demoT > 1.7){
-      demoT = 0; plant.sway = 1;
+      demoT = 0;
+      plants[Math.floor(Math.random() * plants.length)].sway = 1;
       if (helpers.length){
         hp = helpers[Math.floor(Math.random() * helpers.length)];
-        hp.hop = 10 * HR; hp.look = plant.x > hp.hx ? 1 : -1;
+        hp.hop = 10 * HR; hp.look = plants[0].x > hp.hx ? 1 : -1;
       }
     }
     if (stage === 2 && demoT > 1.3){
-      demoT = 0; plant.sway = 1.5;
-      for (i = 0; i < helpers.length; i++) helpers[i].look = plant.x > helpers[i].hx ? 1 : -1;
+      demoT = 0;
+      for (i = 0; i < plants.length; i++) plants[i].sway = 1.5;
+      for (i = 0; i < helpers.length; i++) helpers[i].look = plants[0].x > helpers[i].hx ? 1 : -1;
       if (helpers.length) helpers[Math.floor(Math.random() * helpers.length)].hop = 15 * HR;
     }
     if (stage === 3){
       autoPh += dt;
       var q = autoPh % 4.2;
       auto = q < 1.7 ? 0.38 * Math.sin(q / 1.7 * Math.PI) : 0;
-      if (q < dt * 2) plant.sway = 1;
+      if (q < dt * 2 && plants.length) plants[plants.length - 1].sway = 1;
     }
   } else { autoPh = 0; }
 
-  var shown = plant ? Math.max(plant.p, auto) : 0;
-  shownG = shown;
+  var demoI = plants.length - 1;
+  effortG = Math.max(effort, auto);
 
   /* --- 連れ。引きの量だけ後ろへ傾き、抜けた順に転がる --- */
   for (i = 0; i < helpers.length; i++){
     hp = helpers[i];
-    var tgt = leanDir * shown * 0.46;
+    var ht2 = leanDir * effortG * 0.46;
     if (hp.fallAt && t > hp.fallAt){
       if (!hp.rung){ hp.rung = true; ping(jit(294 * Math.pow(2, (i % 5) / 5)), 0.26, 'triangle', 0.13); }
-      tgt = leanDir * 1.22;
-      if (t > hp.upAt){ tgt = 0; if (Math.abs(hp.fall) < 0.04) hp.fallAt = 0; }
+      ht2 = leanDir * 1.22;
+      if (t > hp.upAt){ ht2 = 0; if (Math.abs(hp.fall) < 0.04) hp.fallAt = 0; }
     }
-    hp.fall += (tgt - hp.fall) * Math.min(1, dt * (hp.fallAt ? 13 : 9));
-    hp.lean = 0;
+    hp.fall += (ht2 - hp.fall) * Math.min(1, dt * (hp.fallAt ? 13 : 9));
     hp.hop *= Math.exp(-dt * 6);
     hp.look *= Math.exp(-dt * 0.7);
   }
 
-  /* --- 抜けたやさい --- */
-  for (i = loose.length - 1; i >= 0; i--){
-    o = loose[i];
-    if (!o.rest){
-      o.vy += 1750 * HR * dt;
-      o.x += o.vx * dt; o.y += o.vy * dt; o.rot += o.rv * dt;
-      if (o.y >= o.yr){
-        o.y = o.yr;
-        if (Math.abs(o.vy) > 150 * HR){
-          o.vy *= -0.34; o.vx *= 0.12; o.rv *= 0.4;
-          puff(o.x, o.y, 4, '#8a6a45', 0.6);
-          ping(jit(o.k.freq * 0.5), 0.14, 'sine', 0.09);
-        } else { o.rest = 1; o.vy = 0; o.vx = 0; }
+  /* --- 飛んでいるやさい。着いたら層に焼き付けて残す --- */
+  for (i = flying.length - 1; i >= 0; i--){
+    o = flying[i];
+    o.vy += 1750 * HR * dt;
+    o.x += o.vx * dt; o.y += o.vy * dt; o.rot += o.rv * dt;
+    o.x = clamp(o.x, 26 * HR, W - 26 * HR);
+    if (o.y >= o.yr){
+      o.y = o.yr;
+      if (Math.abs(o.vy) > 150 * HR){
+        o.vy *= -0.34; o.vx *= 0.12; o.rv *= 0.4;
+        puff(o.x, o.y, 4, '#8a6a45', 0.6);
+        ping(jit(o.k.freq * 0.5), 0.14, 'sine', 0.09);
+      } else {
+        land(o);
+        flying.splice(i, 1);
       }
-      o.x = clamp(o.x, Math.min(o.ext, W * 0.45), Math.max(W - o.ext, W * 0.55));
-    } else if (i < loose.length - 3){
-      o.fade -= dt * 0.9;
-      if (o.fade <= 0) loose.splice(i, 1);
     }
   }
 
   /* --- 土煙 --- */
   for (i = dust.length - 1; i >= 0; i--){
-    var p2 = dust[i];
-    p2.age += dt;
-    if (p2.age > p2.life){ dust.splice(i, 1); continue; }
-    p2.vy += 420 * HR * dt;
-    p2.x += p2.vx * dt; p2.y += p2.vy * dt;
-    p2.vx *= Math.exp(-dt * 1.8);
+    d2 = dust[i];
+    d2.age += dt;
+    if (d2.age > d2.life){ dust.splice(i, 1); continue; }
+    d2.vy += 420 * HR * dt;
+    d2.x += d2.vx * dt; d2.y += d2.vy * dt;
+    d2.vx *= Math.exp(-dt * 1.8);
   }
 
   /* ---------- 描く ---------- */
   ctx.fillStyle = SKY; ctx.fillRect(0, 0, W, groundY + 2);
   drawClouds(t);
 
-  var hx = plant ? plant.x : W / 2;
-  var hrx = plant ? Math.max(16, plant.k.wid * plant.sc * 0.56) : 30;
-  var hry = (4 + shown * 20) * HR;
-  var hy = groundY + 3;
-
-  /* 穴の底 */
-  ctx.fillStyle = '#4e3a24';
-  ctx.beginPath(); ctx.ellipse(hx, hy, hrx, hry, 0, 0, 6.283); ctx.fill();
-
-  /* 本体。土の下は次に描く土が隠す */
-  if (plant){
-    k = plant.k;
-    var rise = shown * k.len * plant.sc * 0.82;
-    var bend = plant.grab !== null ? (plant.fx - plant.x) * shown * 0.16 : 0;
-    var tr = shown > 0.12 ? shown * 1.7 * HR : 0;
+  /* 穴と、そこに見えている本体 */
+  var holes = [];
+  for (i = 0; i < plants.length; i++){
+    p = plants[i];
+    var shown = (i === demoI) ? Math.max(p.p, auto) : p.p;
+    p.shown = shown;
+    holes.push({
+      x: p.x, y: groundY + p.dy + 3,
+      rx: Math.max(16, p.k.wid * p.sc * 0.56), ry: (4 + shown * 20) * HR
+    });
+  }
+  for (i = 0; i < holes.length; i++){
+    ctx.fillStyle = '#4e3a24';
+    ctx.beginPath(); ctx.ellipse(holes[i].x, holes[i].y, holes[i].rx, holes[i].ry, 0, 0, 6.283); ctx.fill();
+  }
+  for (i = 0; i < plants.length; i++){
+    p = plants[i];
+    var rise = p.shown * p.k.len * p.sc * 0.82;
+    var bend = (pulling && pulling.p === p) ? (p.fx - p.x) * p.shown * 0.16 : 0;
+    var tr = p.shown > 0.12 ? p.shown * 1.7 * HR : 0;
     ctx.save();
-    ctx.translate(plant.x + bend, groundY - rise);
+    ctx.translate(p.x + bend, groundY + p.dy - rise);
     ctx.rotate(clamp(bend / (140 * HR), -0.3, 0.3));
-    drawBody(k, plant.sc, tr, t, plant.seed);
+    drawBody(p.k, p.sc, tr, t, p.seed);
     ctx.restore();
   }
 
-  drawSoil(hx, hy, hrx, hry);
-  drawCracks(hx, hy, hrx, shown, plant ? plant.seed : 0);
+  drawSoil(holes);
+  for (i = 0; i < plants.length; i++){
+    p = plants[i];
+    drawCracks(p.x, groundY + p.dy + 3, Math.max(16, p.k.wid * p.sc * 0.56), p.shown, p.seed);
+  }
 
-  /* 転がったやさい */
-  for (i = 0; i < loose.length; i++){
-    o = loose[i];
+  /* 抜いたやさい。焼き付けた層をそのまま置く */
+  if (layer) ctx.drawImage(layer, 0, 0, W, H);
+
+  for (i = 0; i < flying.length; i++){
+    o = flying[i];
     ctx.save();
-    ctx.globalAlpha = clamp(o.fade, 0, 1);
     ctx.translate(o.x, o.y);
-    ctx.rotate(o.rest ? o.lie : o.rot);
+    ctx.rotate(o.rot);
     ctx.translate(0, -o.k.len * o.sc * 0.58 * 0.55);
     drawBody(o.k, o.sc * 0.58, 0, t, o.seed);
     drawLeaves(o.k, o.sc * 0.48, 4, 0, 0, t, o.seed, 0);
     ctx.restore();
   }
-  ctx.globalAlpha = 1;
 
   /* 葉。土の上に出るので土より後に描く */
-  if (plant){
-    k = plant.k;
-    var rise2 = shown * k.len * plant.sc * 0.82;
-    var bend2 = plant.grab !== null ? (plant.fx - plant.x) * shown * 0.16 : 0;
+  for (i = 0; i < plants.length; i++){
+    p = plants[i];
+    var rise2 = p.shown * p.k.len * p.sc * 0.82;
+    var held = pulling && pulling.p === p;
+    var bend2 = held ? (p.fx - p.x) * p.shown * 0.16 : 0;
     var dir = 0;
-    if (plant.grab !== null) dir = clamp(Math.atan2(plant.fx - plant.x, (groundY - rise2) - plant.fy), -1.2, 1.2);
-    var swy = plant.sway * Math.sin(t * 7.5) * 0.24;
+    if (held) dir = clamp(Math.atan2(p.fx - p.x, (groundY + p.dy - rise2) - p.fy), -1.2, 1.2);
+    var swy = p.sway * Math.sin(t * 7.5) * 0.24;
     ctx.save();
-    ctx.translate(plant.x + bend2, groundY - rise2 + 2);
+    ctx.translate(p.x + bend2, groundY + p.dy - rise2 + 2);
     ctx.rotate(clamp(bend2 / (140 * HR), -0.3, 0.3) + swy);
-    ctx.scale(1, clamp(plant.grow, 0.12, 1));
-    drawLeaves(k, plant.sc, 5, dir, shown, t, plant.seed, shown > 0.12 ? shown * 1.4 * HR : 0);
+    ctx.scale(1, clamp(p.grow, 0.12, 1));
+    drawLeaves(p.k, p.sc, 5, dir, p.shown, t, p.seed, p.shown > 0.12 ? p.shown * 1.4 * HR : 0);
     ctx.restore();
   }
 
-  for (i = 0; i < helpers.length; i++) drawHelper(helpers[i], t);
+  for (i = 0; i < helpers.length; i++) drawHelper(helpers[i], t, effortG);
 
   for (i = 0; i < dust.length; i++){
-    var d2 = dust[i];
+    d2 = dust[i];
     ctx.globalAlpha = clamp(1 - d2.age / d2.life, 0, 1) * 0.85;
     ctx.fillStyle = d2.col;
     ctx.beginPath(); ctx.ellipse(d2.x, d2.y, d2.r, d2.r * 0.86, 0, 0, 6.283); ctx.fill();
@@ -768,20 +959,23 @@ function frame(ms){
 
 /* 中の値を外から読むための窓。tools/check_nukeru.js が数えるために使う */
 window.__probe = function(){
+  var p = pulling ? pulling.p : (plants.length ? plants[plants.length - 1] : null);
   return {
-    n: helpers.length, pull: shownG, kind: plant ? plant.k.id : '', loose: loose.length,
-    x: plant ? plant.x : 0, gy: groundY,
+    n: helpers.length, pull: effortG, kind: p ? p.k.id : '', loose: pile.length + flying.length,
+    x: p ? p.x : 0, gy: groundY + (p ? p.dy : 0), plants: plants.length, lanes: slotCount(),
+    xs: plants.map(function(q){ return Math.round(q.x); }),
+    kinds: plants.map(function(q){ return q.k.id; }),
     fall: helpers.map(function(h){ return h.fall; })
   };
 };
 
 /* ---------- 起動 ---------- */
 resize();
-makeSpecks();
-plant = newPlant();
+LANES = laneCount();
+addPlant(Math.floor(LANES / 2));
+addPlant(LANES + Math.max(0, Math.floor(LANES / 2) - 1));
 helpers.push(makeHelper());
 layoutHelpers();
-window.addEventListener('resize', makeSpecks);
 requestAnimationFrame(frame);
 
 })();
