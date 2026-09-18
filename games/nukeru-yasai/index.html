@@ -525,3 +525,266 @@ home.addEventListener('pointerdown', hStart, { passive: false });
 
 /* ---------- 土の模様 ---------- */
 var spx = [];
+function makeSpecks(){
+  spx = [];
+  var n = Math.floor((W * (H - groundY)) / 2600), i;
+  for (i = 0; i < n; i++){
+    spx.push({
+      x: rnd(0, W), y: rnd(groundY + 6, H), r: rnd(1.6, 4.4) * HR,
+      c: Math.random() < 0.5 ? 'rgba(232,215,186,.22)' : 'rgba(72,52,32,.20)'
+    });
+  }
+}
+
+function drawSoil(hx, hy, hrx, hry){
+  var x, i, s;
+  ctx.beginPath();
+  ctx.moveTo(0, groundY);
+  for (x = 0; x <= W; x += 14) ctx.lineTo(x, groundY + Math.sin(x * 0.021) * 2.4);
+  ctx.lineTo(W, groundY + Math.sin(W * 0.021) * 2.4);
+  ctx.lineTo(W, H + 2); ctx.lineTo(0, H + 2); ctx.closePath();
+  ctx.moveTo(hx + hrx, hy);
+  ctx.ellipse(hx, hy, hrx, hry, 0, 0, 6.283);
+  ctx.fillStyle = SOIL; ctx.fill('evenodd');
+  for (i = 0; i < spx.length; i++){
+    s = spx[i];
+    if (Math.abs(s.x - hx) < hrx && Math.abs(s.y - hy) < hry) continue;
+    ctx.fillStyle = s.c;
+    ctx.beginPath(); ctx.ellipse(s.x, s.y, s.r, s.r * 0.7, 0, 0, 6.283); ctx.fill();
+  }
+  ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(70,50,30,.32)';
+  ctx.beginPath(); ctx.ellipse(hx, hy, hrx, hry, 0, 0, 6.283); ctx.stroke();
+}
+
+/* 土のひび。引くほど長く伸びる */
+function drawCracks(hx, hy, hrx, p, seed){
+  if (p < 0.04) return;
+  var i, a, L;
+  ctx.lineCap = 'round';
+  for (i = 0; i < 7; i++){
+    a = seed + i * 0.9 + Math.sin(i * 2.3 + seed) * 0.34;
+    L = (9 + p * 36 * HR) * (0.5 + ((i * 7) % 5) / 5);
+    ctx.beginPath();
+    ctx.moveTo(hx + Math.cos(a) * hrx * 0.9, hy + Math.sin(a) * hrx * 0.42);
+    ctx.lineTo(hx + Math.cos(a) * (hrx * 0.9 + L), hy + Math.sin(a) * (hrx * 0.42 + L * 0.42));
+    ctx.lineWidth = Math.max(2, 3 * HR * (1 - i / 11));
+    ctx.strokeStyle = 'rgba(64,45,27,' + (0.12 + p * 0.24) + ')';
+    ctx.stroke();
+  }
+}
+
+function drawClouds(t){
+  var i, x, y, r;
+  for (i = 0; i < 3; i++){
+    x = ((t * (5 + i * 2) + i * 420) % (W + 260)) - 130;
+    y = groundY * (0.2 + i * 0.22);
+    r = (26 + i * 9) * HR;
+    ctx.fillStyle = 'rgba(253,250,242,.62)';
+    ctx.beginPath(); ctx.ellipse(x, y, r * 1.5, r * 0.62, 0, 0, 6.283); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x - r * 0.7, y + r * 0.12, r * 0.72, r * 0.5, 0, 0, 6.283); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x + r * 0.62, y + r * 0.16, r * 0.62, r * 0.42, 0, 0, 6.283); ctx.fill();
+  }
+}
+
+/* ---------- ループ ---------- */
+var last = 0, autoPh = 0, shownG = 0;
+
+function frame(ms){
+  var dt = last ? Math.min(0.05, (ms - last) / 1000) : 0.016;
+  last = ms;
+  var t = ms / 1000, i, hp, o, k;
+
+  /* --- 引きの量 --- */
+  var raw = 0;
+  if (plant){
+    plant.grow = Math.min(1, plant.grow + dt / 0.5);
+    if (plant.grab !== null){
+      var d = Math.hypot(plant.fx - plant.x, plant.fy - (groundY - 18 * HR));
+      var rd = clamp(d / pullDist(), 0, 1);
+      /* 半分より深く引いたまま持っていると、そのぶんだけ土がゆるむ。
+         指が動いていないのに勝手に伸びないよう、浅いところでは足さない */
+      plant.creep += dt * (rd > 0.45 ? 0.26 : 0);
+      raw = Math.min(1, rd + plant.creep);
+      plant.raw = raw;
+      var a = (raw - plant.p) * 430 - plant.pv * 34;
+      plant.pv += a * dt; plant.p += plant.pv * dt;
+      plant.p = clamp(plant.p, 0, 1.08);
+      if (plant.voice) plant.voice.update(plant.p, plant.sp);
+      plant.sp *= Math.exp(-dt * 6);
+      if (raw >= 1) popOut();
+    } else {
+      var b = (0 - plant.p) * 170 - plant.pv * 12;
+      plant.pv += b * dt; plant.p += plant.pv * dt;
+      if (plant.p < 0.002 && Math.abs(plant.pv) < 0.02){ plant.p = 0; plant.pv = 0; }
+      plant.sway *= Math.exp(-dt * 2.0);
+    }
+  }
+
+  /* --- 誘い。指示は届かない前提なので動きだけで誘う --- */
+  var idle = (now() - lastInput) / 1000, stage = 0, auto = 0;
+  if (plant && plant.grab === null && idle > 3){
+    stage = idle < 8 ? 1 : (idle < 15 ? 2 : 3);
+    demoT += dt;
+    if (stage === 1 && demoT > 1.7){
+      demoT = 0; plant.sway = 1;
+      if (helpers.length){
+        hp = helpers[Math.floor(Math.random() * helpers.length)];
+        hp.hop = 10 * HR; hp.look = plant.x > hp.hx ? 1 : -1;
+      }
+    }
+    if (stage === 2 && demoT > 1.3){
+      demoT = 0; plant.sway = 1.5;
+      for (i = 0; i < helpers.length; i++) helpers[i].look = plant.x > helpers[i].hx ? 1 : -1;
+      if (helpers.length) helpers[Math.floor(Math.random() * helpers.length)].hop = 15 * HR;
+    }
+    if (stage === 3){
+      autoPh += dt;
+      var q = autoPh % 4.2;
+      auto = q < 1.7 ? 0.38 * Math.sin(q / 1.7 * Math.PI) : 0;
+      if (q < dt * 2) plant.sway = 1;
+    }
+  } else { autoPh = 0; }
+
+  var shown = plant ? Math.max(plant.p, auto) : 0;
+  shownG = shown;
+
+  /* --- 連れ。引きの量だけ後ろへ傾き、抜けた順に転がる --- */
+  for (i = 0; i < helpers.length; i++){
+    hp = helpers[i];
+    var tgt = leanDir * shown * 0.46;
+    if (hp.fallAt && t > hp.fallAt){
+      if (!hp.rung){ hp.rung = true; ping(jit(294 * Math.pow(2, (i % 5) / 5)), 0.26, 'triangle', 0.13); }
+      tgt = leanDir * 1.22;
+      if (t > hp.upAt){ tgt = 0; if (Math.abs(hp.fall) < 0.04) hp.fallAt = 0; }
+    }
+    hp.fall += (tgt - hp.fall) * Math.min(1, dt * (hp.fallAt ? 13 : 9));
+    hp.lean = 0;
+    hp.hop *= Math.exp(-dt * 6);
+    hp.look *= Math.exp(-dt * 0.7);
+  }
+
+  /* --- 抜けたやさい --- */
+  for (i = loose.length - 1; i >= 0; i--){
+    o = loose[i];
+    if (!o.rest){
+      o.vy += 1750 * HR * dt;
+      o.x += o.vx * dt; o.y += o.vy * dt; o.rot += o.rv * dt;
+      if (o.y >= o.yr){
+        o.y = o.yr;
+        if (Math.abs(o.vy) > 150 * HR){
+          o.vy *= -0.34; o.vx *= 0.12; o.rv *= 0.4;
+          puff(o.x, o.y, 4, '#8a6a45', 0.6);
+          ping(jit(o.k.freq * 0.5), 0.14, 'sine', 0.09);
+        } else { o.rest = 1; o.vy = 0; o.vx = 0; }
+      }
+      o.x = clamp(o.x, Math.min(o.ext, W * 0.45), Math.max(W - o.ext, W * 0.55));
+    } else if (i < loose.length - 3){
+      o.fade -= dt * 0.9;
+      if (o.fade <= 0) loose.splice(i, 1);
+    }
+  }
+
+  /* --- 土煙 --- */
+  for (i = dust.length - 1; i >= 0; i--){
+    var p2 = dust[i];
+    p2.age += dt;
+    if (p2.age > p2.life){ dust.splice(i, 1); continue; }
+    p2.vy += 420 * HR * dt;
+    p2.x += p2.vx * dt; p2.y += p2.vy * dt;
+    p2.vx *= Math.exp(-dt * 1.8);
+  }
+
+  /* ---------- 描く ---------- */
+  ctx.fillStyle = SKY; ctx.fillRect(0, 0, W, groundY + 2);
+  drawClouds(t);
+
+  var hx = plant ? plant.x : W / 2;
+  var hrx = plant ? Math.max(16, plant.k.wid * plant.sc * 0.56) : 30;
+  var hry = (4 + shown * 20) * HR;
+  var hy = groundY + 3;
+
+  /* 穴の底 */
+  ctx.fillStyle = '#4e3a24';
+  ctx.beginPath(); ctx.ellipse(hx, hy, hrx, hry, 0, 0, 6.283); ctx.fill();
+
+  /* 本体。土の下は次に描く土が隠す */
+  if (plant){
+    k = plant.k;
+    var rise = shown * k.len * plant.sc * 0.82;
+    var bend = plant.grab !== null ? (plant.fx - plant.x) * shown * 0.16 : 0;
+    var tr = shown > 0.12 ? shown * 1.7 * HR : 0;
+    ctx.save();
+    ctx.translate(plant.x + bend, groundY - rise);
+    ctx.rotate(clamp(bend / (140 * HR), -0.3, 0.3));
+    drawBody(k, plant.sc, tr, t, plant.seed);
+    ctx.restore();
+  }
+
+  drawSoil(hx, hy, hrx, hry);
+  drawCracks(hx, hy, hrx, shown, plant ? plant.seed : 0);
+
+  /* 転がったやさい */
+  for (i = 0; i < loose.length; i++){
+    o = loose[i];
+    ctx.save();
+    ctx.globalAlpha = clamp(o.fade, 0, 1);
+    ctx.translate(o.x, o.y);
+    ctx.rotate(o.rest ? o.lie : o.rot);
+    ctx.translate(0, -o.k.len * o.sc * 0.58 * 0.55);
+    drawBody(o.k, o.sc * 0.58, 0, t, o.seed);
+    drawLeaves(o.k, o.sc * 0.48, 4, 0, 0, t, o.seed, 0);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+
+  /* 葉。土の上に出るので土より後に描く */
+  if (plant){
+    k = plant.k;
+    var rise2 = shown * k.len * plant.sc * 0.82;
+    var bend2 = plant.grab !== null ? (plant.fx - plant.x) * shown * 0.16 : 0;
+    var dir = 0;
+    if (plant.grab !== null) dir = clamp(Math.atan2(plant.fx - plant.x, (groundY - rise2) - plant.fy), -1.2, 1.2);
+    var swy = plant.sway * Math.sin(t * 7.5) * 0.24;
+    ctx.save();
+    ctx.translate(plant.x + bend2, groundY - rise2 + 2);
+    ctx.rotate(clamp(bend2 / (140 * HR), -0.3, 0.3) + swy);
+    ctx.scale(1, clamp(plant.grow, 0.12, 1));
+    drawLeaves(k, plant.sc, 5, dir, shown, t, plant.seed, shown > 0.12 ? shown * 1.4 * HR : 0);
+    ctx.restore();
+  }
+
+  for (i = 0; i < helpers.length; i++) drawHelper(helpers[i], t);
+
+  for (i = 0; i < dust.length; i++){
+    var d2 = dust[i];
+    ctx.globalAlpha = clamp(1 - d2.age / d2.life, 0, 1) * 0.85;
+    ctx.fillStyle = d2.col;
+    ctx.beginPath(); ctx.ellipse(d2.x, d2.y, d2.r, d2.r * 0.86, 0, 0, 6.283); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  requestAnimationFrame(frame);
+}
+
+/* 中の値を外から読むための窓。tools/check_nukeru.js が数えるために使う */
+window.__probe = function(){
+  return {
+    n: helpers.length, pull: shownG, kind: plant ? plant.k.id : '', loose: loose.length,
+    x: plant ? plant.x : 0, gy: groundY,
+    fall: helpers.map(function(h){ return h.fall; })
+  };
+};
+
+/* ---------- 起動 ---------- */
+resize();
+makeSpecks();
+plant = newPlant();
+helpers.push(makeHelper());
+layoutHelpers();
+window.addEventListener('resize', makeSpecks);
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
