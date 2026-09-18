@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#e5d7b9">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>ぬけるやさい</title>
+<style>
+  :root{ color-scheme: light; }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    width:100%; height:100%; overflow:hidden;
+    background:#e5d7b9;
+    overscroll-behavior:none; touch-action:none;
+    -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent;
+    font-family: system-ui, -apple-system, "Segoe UI",
+      "Hiragino Kaku Gothic ProN", "Hiragino Sans",
+      "BIZ UDPGothic", "Yu Gothic Medium", "Yu Gothic", YuGothic,
+      Meiryo, "Noto Sans JP", sans-serif;
+  }
+  #c{ position:fixed; inset:0; width:100%; height:100dvh; display:block; }
+  #home{
+    position:fixed; top:max(10px, env(safe-area-inset-top)); left:max(10px, env(safe-area-inset-left));
+    width:40px; height:40px; padding:0; border:0; border-radius:50%;
+    background:rgba(255,255,255,.42); backdrop-filter:blur(2px);
+    display:grid; place-items:center; cursor:pointer; z-index:5;
+    touch-action:none; -webkit-tap-highlight-color:transparent;
+  }
+  #home svg{ width:34px; height:34px; display:block; }
+  #home .trk{ fill:none; stroke:rgba(74,92,96,.22); stroke-width:2.5; }
+  #home .rng{
+    fill:none; stroke:#4a5c60; stroke-width:2.5; stroke-linecap:round;
+    stroke-dasharray:94.2; stroke-dashoffset:94.2;
+    transform:rotate(-90deg); transform-origin:50% 50%;
+    transition:stroke-dashoffset .04s linear;
+  }
+  #home.hold .rng{ stroke-dashoffset:0; transition:stroke-dashoffset .7s linear; }
+  #home .ico{ fill:#4a5c60; opacity:.72; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="home" aria-label="おもちゃばこに もどる">
+  <svg viewBox="0 0 36 36" aria-hidden="true">
+    <circle class="trk" cx="18" cy="18" r="15"/>
+    <circle class="rng" cx="18" cy="18" r="15"/>
+    <path class="ico" d="M18 9.4 10.2 16v9.1c0 .6.5 1.1 1.1 1.1h4.1v-5.3h5.2v5.3h4.1c.6 0 1.1-.5 1.1-1.1V16z"/>
+  </svg>
+</button>
+<script>
+(function(){
+'use strict';
+
+/* ---------- 画面 ---------- */
+var c = document.getElementById('c'), ctx = c.getContext('2d');
+var W = 0, H = 0, DPR = 1, LAND = false, groundY = 0, HR = 1;
+var SKY = null, SOIL = null, VS = 1;
+
+function clamp(v, a, b){ return v < a ? a : (v > b ? b : v); }
+function rnd(a, b){ return a + Math.random() * (b - a); }
+function pick(arr){ return arr[Math.floor(Math.random() * arr.length)]; }
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  var r = c.getBoundingClientRect();
+  W = Math.max(1, r.width); H = Math.max(1, r.height);
+  c.width = Math.round(W * DPR); c.height = Math.round(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  LAND = W > H;
+  groundY = Math.round(H * (LAND ? 0.42 : 0.46));
+  HR = clamp(Math.min(W, H) / 390, 0.62, 1.5);
+  VS = clamp(Math.min(W / 300, groundY / 250), 0.55, 1.7);
+  SKY = ctx.createLinearGradient(0, 0, 0, groundY);
+  SKY.addColorStop(0,   '#cfe1e6');
+  SKY.addColorStop(0.6, '#e2ecdf');
+  SKY.addColorStop(1,   '#f0e8cf');
+  SOIL = ctx.createLinearGradient(0, groundY, 0, H);
+  SOIL.addColorStop(0,   '#a78156');
+  SOIL.addColorStop(0.5, '#8d6944');
+  SOIL.addColorStop(1,   '#6e5235');
+  if (plant){
+    plant.x = clamp(plant.x, W * 0.24, W * 0.76);
+    plant.y = groundY;
+  }
+  layoutHelpers();
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', function(){ setTimeout(resize, 120); });
+if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+
+/* ---------- 音 ---------- */
+var ac = null, master = null, noiseBuf = null, loopBuf = null, voices = 0;
+var MAXV = 9;
+
+function audio(){
+  if (ac){ if (ac.state === 'suspended') ac.resume(); return ac; }
+  var AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  try { ac = new AC(); } catch(e){ return null; }
+  var comp = ac.createDynamicsCompressor();
+  comp.threshold.value = -17; comp.knee.value = 22; comp.ratio.value = 9;
+  comp.attack.value = 0.003; comp.release.value = 0.22;
+  master = ac.createGain(); master.gain.value = 0.52;
+  master.connect(comp); comp.connect(ac.destination);
+  var n = Math.floor(ac.sampleRate * 0.16), d, i;
+  noiseBuf = ac.createBuffer(1, n, ac.sampleRate);
+  d = noiseBuf.getChannelData(0);
+  for (i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.2);
+  var m = Math.floor(ac.sampleRate * 1.4);
+  loopBuf = ac.createBuffer(1, m, ac.sampleRate);
+  d = loopBuf.getChannelData(0);
+  for (i = 0; i < m; i++) d[i] = Math.random() * 2 - 1;
+  return ac;
+}
+function jit(v, p){ return v * (1 + (Math.random() * 2 - 1) * (p === undefined ? 0.04 : p)); }
+function slot(){ if (voices >= MAXV) return false; voices++; return true; }
+function freeV(){ voices = Math.max(0, voices - 1); }
+
+/* 単音。押した数だけ呼ぶと和音になる */
+function ping(f, dur, type, vol){
+  var a = audio(); if (!a) return;
+  if (!slot()) return;
+  var t = a.currentTime;
+  var o = a.createOscillator(); o.type = type || 'sine';
+  o.frequency.value = jit(f);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol || 0.17, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + (dur || 0.2));
+  o.connect(g); g.connect(master);
+  o.start(t); o.stop(t + (dur || 0.2) + 0.03);
+  o.onended = freeV;
+}
+
+/* 土をさわった音。どこを押しても必ず1つ鳴らす */
+function sSoil(k){
+  var a = audio(); if (!a) return;
+  var t = a.currentTime;
+  var s = a.createBufferSource(); s.buffer = noiseBuf;
+  var bp = a.createBiquadFilter(); bp.type = 'bandpass';
+  bp.frequency.value = jit(520 + k * 900, 0.12); bp.Q.value = 1.1;
+  var gn = a.createGain();
+  gn.gain.setValueAtTime(0.22, t);
+  gn.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+  s.connect(bp); bp.connect(gn); gn.connect(master); s.start(t);
+  var o = a.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(jit(150 + k * 90), t);
+  o.frequency.exponentialRampToValueAtTime(jit(78), t + 0.14);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.16, t + 0.007);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.18);
+}
+
+/* 引いているあいだ鳴り続ける1声。手を止めても離すまで量に追従する */
+function pullVoice(){
+  var a = audio(); if (!a) return null;
+  var o = a.createOscillator(); o.type = 'triangle';
+  var lp = a.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 700;
+  var g = a.createGain(); g.gain.value = 0.0001;
+  o.connect(lp); lp.connect(g); g.connect(master);
+  o.start();
+  var s = a.createBufferSource(); s.buffer = loopBuf; s.loop = true;
+  var bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 600; bp.Q.value = 0.9;
+  var ng = a.createGain(); ng.gain.value = 0.0001;
+  s.connect(bp); bp.connect(ng); ng.connect(master);
+  s.start();
+  var live = true;
+  return {
+    update: function(k, sp){
+      if (!live) return;
+      var t = a.currentTime;
+      o.frequency.setTargetAtTime(110 + k * 210, t, 0.03);
+      g.gain.setTargetAtTime(0.03 + k * 0.17, t, 0.04);
+      lp.frequency.setTargetAtTime(420 + k * 1700, t, 0.04);
+      bp.frequency.setTargetAtTime(500 + k * 2200, t, 0.03);
+      ng.gain.setTargetAtTime(0.012 + Math.min(0.14, sp * 0.00016), t, 0.03);
+    },
+    stop: function(){
+      if (!live) return; live = false;
+      var t = a.currentTime;
+      g.gain.setTargetAtTime(0, t, 0.05);
+      ng.gain.setTargetAtTime(0, t, 0.02);
+      o.stop(t + 0.4); s.stop(t + 0.2);
+    }
+  };
+}
+
+/* すぽん */
+function sPop(f){
+  var a = audio(); if (!a) return;
+  var t = a.currentTime;
+  var o = a.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(jit(f * 0.5), t);
+  o.frequency.exponentialRampToValueAtTime(jit(f * 2.1), t + 0.055);
+  o.frequency.exponentialRampToValueAtTime(jit(f * 0.9), t + 0.2);
+  var g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.4, t + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.36);
+  var s = a.createBufferSource(); s.buffer = noiseBuf;
+  var bp = a.createBiquadFilter(); bp.type = 'bandpass';
+  bp.frequency.value = jit(1400, 0.2); bp.Q.value = 1.4;
+  var gn = a.createGain();
+  gn.gain.setValueAtTime(0.3, t);
+  gn.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+  s.connect(bp); bp.connect(gn); gn.connect(master); s.start(t);
+}
+
+/* ---------- やさい ---------- */
+/* 形、色、大きさ、抜けたときの音程が1つずつ違う。直前に出たものは選ばない */
+var KINDS = [
+  { id:'kabu',   body:'#f0ebdc', dark:'#c2b99e', leaf:'#7fa64d', len:86,  wid:88, prof:'bulb', lump:0.05, tail:0.30, freq:587 },
+  { id:'ninjin', body:'#df8945', dark:'#bd6a2e', leaf:'#6f9b48', len:128, wid:48, prof:'cone', lump:0.03, tail:0.22, freq:698 },
+  { id:'daikon', body:'#eeefe3', dark:'#b8bba6', leaf:'#86ab52', len:152, wid:46, prof:'cone', lump:0.02, tail:0.20, freq:494 },
+  { id:'imo',    body:'#b06a86', dark:'#8e5069', leaf:'#7aa257', len:130, wid:58, prof:'oval', lump:0.06, tail:0.16, freq:440 },
+  { id:'jaga',   body:'#d8b779', dark:'#b9975c', leaf:'#87a860', len:82,  wid:90, prof:'bulb', lump:0.12, tail:0.10, freq:523 },
+  { id:'tama',   body:'#e5c98d', dark:'#c4a66a', leaf:'#9ab35c', len:90,  wid:86, prof:'bulb', lump:0.04, tail:0.34, freq:659 },
+  { id:'gobo',   body:'#a8814f', dark:'#8a663a', leaf:'#789c4d', len:168, wid:28, prof:'cone', lump:0.05, tail:0.26, freq:349 },
+  { id:'beets',  body:'#b3546a', dark:'#8f3e52', leaf:'#7fa356', len:96,  wid:84, prof:'bulb', lump:0.04, tail:0.38, freq:784 }
+];
+
+/* 幅の輪郭。u は 0（肩）から 1（先） */
+function wprof(k, u){
+  var w;
+  if (k.prof === 'cone')      w = Math.pow(Math.max(0, 1 - u), 0.72);
+  else if (k.prof === 'oval') w = Math.pow(Math.sin(Math.PI * clamp(u, 0, 1)), 0.42);
+  else                        w = Math.pow(Math.sin(Math.PI * clamp(u * 0.97 + 0.03, 0, 1)), 0.55);
+  return Math.max(w, k.prof === 'cone' ? 0 : 0.12 * (1 - u));
+}
+
+/* 本体。原点は肩の中心、+y が土の中 */
+function drawBody(k, sc, tr, t, seed){
+  var len = k.len * sc, wid = k.wid * sc, i, u, w, x, y;
+  ctx.beginPath();
+  for (i = 0; i <= 26; i++){
+    u = i / 26;
+    w = wprof(k, u) * wid * 0.5 * (1 + k.lump * Math.sin(u * 9.3 + seed));
+    x = w + tr * Math.sin(u * 13 + t * 24 + seed);
+    y = u * len;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  /* 先の細い根 */
+  ctx.quadraticCurveTo(wid * 0.05, len * (1 + k.tail * 0.5), 0, len * (1 + k.tail));
+  ctx.quadraticCurveTo(-wid * 0.05, len * (1 + k.tail * 0.5), -wprof(k, 1) * wid * 0.5, len);
+  for (i = 26; i >= 0; i--){
+    u = i / 26;
+    w = wprof(k, u) * wid * 0.5 * (1 + k.lump * Math.sin(u * 9.3 + seed));
+    ctx.lineTo(-w + tr * Math.sin(u * 13 + t * 24 + seed), u * len);
+  }
+  ctx.closePath();
+  ctx.fillStyle = k.body; ctx.fill();
+  ctx.save(); ctx.clip();
+  ctx.fillStyle = 'rgba(255,255,255,.26)';
+  ctx.beginPath(); ctx.ellipse(-wid * 0.17, len * 0.34, wid * 0.16, len * 0.3, -0.2, 0, 6.3); ctx.fill();
+  ctx.fillStyle = 'rgba(90,64,38,.16)';
+  for (i = 0; i < 4; i++){
+    ctx.beginPath();
+    ctx.ellipse(wid * 0.1, len * (0.2 + i * 0.2), wid * 0.32, len * 0.03, 0.1, 0, 6.3);
