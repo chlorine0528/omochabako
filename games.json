@@ -8,6 +8,14 @@
   "photo": "papa.jpg",
   "games": [
     {
+      "slug": "nukeru-yasai",
+      "title": "ぬけるやさい",
+      "date": "2026-09-18",
+      "bg": "#e5d7b9",
+      "icon": "<svg viewBox=\"0 0 120 120\" aria-hidden=\"true\"><path d=\"M0 70h120v50H0z\" fill=\"#8d6944\"/><path d=\"M0 70h120v9H0z\" fill=\"#a78156\"/><ellipse cx=\"55\" cy=\"71\" rx=\"18\" ry=\"6.5\" fill=\"#4e3a24\"/><path d=\"M45 33h20l-6 37-8 1z\" fill=\"#df8945\"/><path d=\"M52 42h7l-1 8h-6z\" fill=\"#c9722f\" opacity=\".5\"/><path d=\"M55 34 33 13l4 23z\" fill=\"#6f9b48\"/><path d=\"M55 34 54 4l8 28z\" fill=\"#86ab52\"/><path d=\"M55 34 80 17l-9 21z\" fill=\"#6f9b48\"/><path d=\"M32 88h10M76 92l10-3\" stroke=\"#6b4f33\" stroke-width=\"4\" stroke-linecap=\"round\" fill=\"none\"/><ellipse cx=\"24\" cy=\"60\" rx=\"13\" ry=\"14\" fill=\"#e0a35c\" transform=\"rotate(-16 24 60)\"/><circle cx=\"19\" cy=\"57\" r=\"2.6\" fill=\"#4a3a2c\"/><circle cx=\"28\" cy=\"55\" r=\"2.6\" fill=\"#4a3a2c\"/><ellipse cx=\"95\" cy=\"62\" rx=\"12\" ry=\"13\" fill=\"#8fae6a\" transform=\"rotate(17 95 62)\"/><circle cx=\"91\" cy=\"59\" r=\"2.5\" fill=\"#4a3a2c\"/><circle cx=\"100\" cy=\"61\" r=\"2.5\" fill=\"#4a3a2c\"/></svg>",
+      "twist": "連れが増える"
+    },
+    {
       "slug": "kumori-garasu",
       "title": "くもりガラス",
       "date": "2026-09-11",
